@@ -1,0 +1,3 @@
+# Windows files: stored with CRLF (and the BOM for .ps1) exactly as Windows needs them.
+*.bat -text
+*.ps1 -text

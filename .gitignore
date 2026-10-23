@@ -1,0 +1,3 @@
+# Contains the Discord webhook: never commit it.
+config.json
+watchdog.log
