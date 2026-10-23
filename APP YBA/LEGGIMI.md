@@ -36,8 +36,12 @@ Non serve installare niente: usa PowerShell, che c'è già in Windows 10 e 11.
    - `3` per fare i passi nella finestra di Roblox: **scroll → click → altro click** (scroll e numero di click
      si possono cambiare). Parti con Roblox appena aperto, nella home in cima. Ogni passo si registra con
      mouse sopra + **F8** (oppure **INVIO** nella finestra nera + 5 secondi) e il Setup **lo prova subito** su Roblox:
-     - **Scroll**: scrivi quanti scatti di rotellina (positivo = giù, negativo = su). Se dopo la prova il bottone
-       non si vede, il Setup torna su e ti fa provare un altro numero.
+     - **Scroll**: il Setup lo prova in 3 modi, finché uno fa muovere la pagina di Roblox:
+       1. rotellina del mouse; 2. rotellina mandata direttamente a Roblox (scrivi quanti scatti: positivo = giù);
+       3. trascinamento: registri con F8 dove inizia e dove finisce (sulla pagina: fine più in ALTO;
+          sulla barra di scorrimento: fine più in BASSO).
+       Dopo ogni prova ti chiede se la pagina si è mossa e se il bottone si vede; se no, torna su e riprovi.
+       L'app poi usa il modo che ha funzionato.
      - **Click**: il Setup clicca e ti chiede se ha funzionato; se no, lo registri di nuovo.
        Così Roblox arriva alla schermata giusta per il click dopo.
 5. **I 2 click finali**: mouse sopra il primo bottone dell'app + **F8**, poi sopra il secondo + **F8**.

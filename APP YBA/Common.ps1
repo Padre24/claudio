@@ -43,7 +43,15 @@ public static class YbaWin32
     private const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
     private const uint MOUSEEVENTF_LEFTUP = 0x0004;
     private const uint MOUSEEVENTF_WHEEL = 0x0800;
+    private const uint MOUSEEVENTF_MOVE = 0x0001;
+    private const uint MOUSEEVENTF_ABSOLUTE = 0x8000;
+    private const uint MOUSEEVENTF_VIRTUALDESK = 0x4000;
     private const int WHEEL_DELTA = 120;
+    private const uint WM_MOUSEWHEEL = 0x020A;
+    private const int SM_XVIRTUALSCREEN = 76;
+    private const int SM_YVIRTUALSCREEN = 77;
+    private const int SM_CXVIRTUALSCREEN = 78;
+    private const int SM_CYVIRTUALSCREEN = 79;
 
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
     [DllImport("user32.dll")] public static extern bool IsHungAppWindow(IntPtr hWnd);
@@ -68,6 +76,11 @@ public static class YbaWin32
     [DllImport("user32.dll")] private static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extraInfo);
     [DllImport("user32.dll")] private static extern void mouse_event(uint flags, int dx, int dy, uint data, UIntPtr extraInfo);
     [DllImport("kernel32.dll")] private static extern IntPtr GetConsoleWindow();
+    [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll")] private static extern bool AttachThreadInput(uint attach, uint attachTo, bool doAttach);
+    [DllImport("user32.dll")] private static extern void SwitchToThisWindow(IntPtr hWnd, bool altTab);
+    [DllImport("user32.dll")] private static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")] private static extern int GetSystemMetrics(int index);
     [DllImport("kernel32.dll")] private static extern IntPtr GetStdHandle(int handle);
     [DllImport("kernel32.dll")] private static extern bool GetConsoleMode(IntPtr handle, out uint mode);
     [DllImport("kernel32.dll")] private static extern bool SetConsoleMode(IntPtr handle, uint mode);
@@ -196,15 +209,35 @@ public static class YbaWin32
         return t;
     }
 
+    // Windows non lascia attivare finestre a un programma che gira nella finestra nera: si prova in tre modi.
+    // Conta per la rotellina: un click attiva la finestra da solo, lo scroll no.
     public static void FocusWindow(IntPtr hWnd)
     {
         if (IsIconic(hWnd)) ShowWindow(hWnd, SW_RESTORE);
-        if (GetForegroundWindow() == hWnd) return;
-        // Premere e rilasciare ALT permette a SetForegroundWindow di portare davvero la finestra davanti.
-        keybd_event(VK_MENU, 0, 0, UIntPtr.Zero);
-        keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
-        SetForegroundWindow(hWnd);
-        BringWindowToTop(hWnd);
+        IntPtr foreground = GetForegroundWindow();
+        if (foreground == hWnd) return;
+        uint foregroundPid;
+        uint foregroundThread = foreground == IntPtr.Zero ? 0 : GetWindowThreadProcessId(foreground, out foregroundPid);
+        uint thisThread = GetCurrentThreadId();
+        bool attached = foregroundThread != 0 && foregroundThread != thisThread && AttachThreadInput(thisThread, foregroundThread, true);
+        try
+        {
+            // Premere e rilasciare ALT permette a SetForegroundWindow di portare davvero la finestra davanti.
+            keybd_event(VK_MENU, 0, 0, UIntPtr.Zero);
+            keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+            SetForegroundWindow(hWnd);
+            BringWindowToTop(hWnd);
+        }
+        finally
+        {
+            if (attached) AttachThreadInput(thisThread, foregroundThread, false);
+        }
+        if (GetForegroundWindow() != hWnd) SwitchToThisWindow(hWnd, true);
+    }
+
+    public static bool IsForeground(IntPtr hWnd)
+    {
+        return GetForegroundWindow() == hWnd;
     }
 
     public static void FocusConsole()
@@ -213,8 +246,21 @@ public static class YbaWin32
         if (hWnd != IntPtr.Zero) FocusWindow(hWnd);
     }
 
-    // Porta il mouse nel punto indicato della finestra.
-    // Piccolo movimento finale: alcune app (e Roblox) registrano click e rotellina solo dopo l'hover.
+    // Movimento del mouse "vero" (come quello di un mouse fisico), non solo lo spostamento del cursore:
+    // alcune app (e Roblox) aggiornano l'hover solo con questo.
+    private static void InjectMoveTo(int x, int y)
+    {
+        int left = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        int top = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        int width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        int height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        if (width <= 1 || height <= 1) return;
+        int nx = (int)(((long)(x - left) * 65535) / (width - 1));
+        int ny = (int)(((long)(y - top) * 65535) / (height - 1));
+        mouse_event(MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK, nx, ny, 0, UIntPtr.Zero);
+    }
+
+    // Porta il mouse nel punto indicato della finestra, con un piccolo movimento finale per l'hover.
     private static bool MoveInWindow(IntPtr hWnd, int offsetX, int offsetY)
     {
         RECT r;
@@ -222,8 +268,10 @@ public static class YbaWin32
         int x = r.Left + offsetX;
         int y = r.Top + offsetY;
         SetCursorPos(x, y);
-        Thread.Sleep(60);
-        SetCursorPos(x + 1, y);
+        Thread.Sleep(40);
+        InjectMoveTo(x + 1, y);
+        Thread.Sleep(40);
+        InjectMoveTo(x, y);
         Thread.Sleep(40);
         SetCursorPos(x, y);
         Thread.Sleep(60);
@@ -249,6 +297,55 @@ public static class YbaWin32
             mouse_event(MOUSEEVENTF_WHEEL, 0, 0, unchecked((uint)delta), UIntPtr.Zero);
             Thread.Sleep(notchDelayMs);
         }
+        return true;
+    }
+
+    // Come ScrollInWindow, ma manda la rotellina direttamente alla finestra (funziona anche se non è attiva).
+    public static bool PostWheelInWindow(IntPtr hWnd, int offsetX, int offsetY, int notches, int notchDelayMs)
+    {
+        RECT r;
+        if (!GetWindowRect(hWnd, out r)) return false;
+        if (!MoveInWindow(hWnd, offsetX, offsetY)) return false;
+        POINT p;
+        p.X = r.Left + offsetX;
+        p.Y = r.Top + offsetY;
+        IntPtr target = WindowFromPoint(p);
+        if (target == IntPtr.Zero || GetProcessId(target) != GetProcessId(hWnd)) target = hWnd;
+        int delta = notches > 0 ? -WHEEL_DELTA : WHEEL_DELTA;
+        IntPtr wParam = new IntPtr(delta << 16);
+        IntPtr lParam = new IntPtr(((p.Y & 0xFFFF) << 16) | (p.X & 0xFFFF));
+        for (int i = 0; i < Math.Abs(notches); i++)
+        {
+            PostMessage(target, WM_MOUSEWHEEL, wParam, lParam);
+            Thread.Sleep(notchDelayMs);
+        }
+        return true;
+    }
+
+    // Tiene premuto il tasto sinistro e trascina da un punto all'altro della finestra (pagina o barra di scorrimento).
+    public static bool DragInWindow(IntPtr hWnd, int fromX, int fromY, int toX, int toY, int durationMs)
+    {
+        RECT r;
+        if (!GetWindowRect(hWnd, out r)) return false;
+        if (!MoveInWindow(hWnd, fromX, fromY)) return false;
+        int x0 = r.Left + fromX;
+        int y0 = r.Top + fromY;
+        int x1 = r.Left + toX;
+        int y1 = r.Top + toY;
+        const int steps = 30;
+        mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, UIntPtr.Zero);
+        Thread.Sleep(120);
+        for (int i = 1; i <= steps; i++)
+        {
+            int x = x0 + (x1 - x0) * i / steps;
+            int y = y0 + (y1 - y0) * i / steps;
+            InjectMoveTo(x, y);
+            SetCursorPos(x, y);
+            Thread.Sleep(Math.Max(1, durationMs / steps));
+        }
+        // Fermo un attimo prima di rilasciare, così la pagina non "scivola" oltre.
+        Thread.Sleep(150);
+        mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, UIntPtr.Zero);
         return true;
     }
 }
@@ -390,17 +487,29 @@ function Get-YbaTargetWindow {
     return $windows[0]
 }
 
-# Scroll lento, a gruppi di 5 scatti con una pausa in mezzo: Roblox carica la home mentre scorre,
-# e scrollando veloce la pagina si ferma alla fine della parte già caricata (gli scatti in più vanno persi).
+# Esegue un passo di scroll nel modo che ha funzionato nella prova del Setup (Method):
+#   'Wheel'   = rotellina del mouse
+#   'Message' = rotellina mandata direttamente alla finestra (funziona anche se non è attiva)
+#   'Drag'    = trascinamento da (X,Y) a (EndX,EndY), come col mouse sulla pagina o sulla barra di scorrimento
+# La rotellina va piano, a gruppi di 5 scatti con una pausa: Roblox carica la home mentre scorre.
 # Lo usano sia la prova nel Setup sia l'app, così lo scroll è identico.
-function Invoke-YbaScroll {
-    param([IntPtr]$Handle, [int]$X, [int]$Y, [int]$Notches, [int]$PauseMilliseconds = 1500)
-    $direction = if ($Notches -gt 0) { 1 } else { -1 }
-    $left = [Math]::Abs($Notches)
+function Invoke-YbaScrollStep {
+    param([IntPtr]$Handle, $Step, [int]$PauseMilliseconds = 1500)
+    [YbaWin32]::FocusWindow($Handle)
+    if ($Step.Method -eq 'Drag') {
+        [void][YbaWin32]::DragInWindow($Handle, [int]$Step.X, [int]$Step.Y, [int]$Step.EndX, [int]$Step.EndY, 600)
+        return
+    }
+    $direction = if ([int]$Step.Amount -gt 0) { 1 } else { -1 }
+    $left = [Math]::Abs([int]$Step.Amount)
     while ($left -gt 0) {
         $chunk = [Math]::Min(5, $left)
         [YbaWin32]::FocusWindow($Handle)
-        [void][YbaWin32]::ScrollInWindow($Handle, $X, $Y, $chunk * $direction, 200)
+        if ($Step.Method -eq 'Message') {
+            [void][YbaWin32]::PostWheelInWindow($Handle, [int]$Step.X, [int]$Step.Y, $chunk * $direction, 200)
+        } else {
+            [void][YbaWin32]::ScrollInWindow($Handle, [int]$Step.X, [int]$Step.Y, $chunk * $direction, 200)
+        }
         $left -= $chunk
         if ($left -gt 0) { Start-Sleep -Milliseconds $PauseMilliseconds }
     }

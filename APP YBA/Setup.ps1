@@ -125,44 +125,84 @@ function Test-RecordedClick {
     return (Read-YesNo '     Ha funzionato?' $true)
 }
 
-# Scroll che si vede subito: lo prova su Roblox (uguale a come lo farà l'app) e, se non va bene,
-# torna su e fa riprovare con un altro numero.
-function Read-ScrollAmount {
+function Read-Notches {
+    param([int]$Default)
+    do {
+        $notches = Read-Number '     Quanti scatti di rotellina? (positivo = giù, negativo = su)' $Default -100
+    } while ($notches -eq 0)
+    return $notches
+}
+
+# Fa lo scroll su Roblox esattamente come lo farà l'app, poi torna su questa finestra.
+function Invoke-SetupScroll {
+    param($Window, $Step, [int]$PauseMilliseconds)
+    Write-Host '     Provo adesso: guarda Roblox.'
+    Invoke-YbaScrollStep -Handle $Window.Handle -Step $Step -PauseMilliseconds $PauseMilliseconds
+    Start-Sleep -Seconds 1
+    [YbaWin32]::FocusConsole()
+}
+
+# Prova lo scroll su Roblox in 3 modi, finché uno funziona: rotellina, rotellina mandata direttamente
+# a Roblox, trascinamento. Restituisce il modo (Method) e i suoi valori, da salvare nel passo.
+function Read-ScrollStep {
     param($Target, [int]$PauseMilliseconds)
-    $amount = 5
-    while ($true) {
-        do {
-            $amount = Read-Number '     Quanti scatti di rotellina? (positivo = giù, negativo = su)' $amount -100
-        } while ($amount -eq 0)
-        $window = Get-YbaTargetWindow -ProcessName $Target.ProcessName -WindowTitle $Target.WindowTitle
-        if ($null -eq $window) {
-            Write-Host '     Non trovo la finestra per provarlo: lo salvo così.' -ForegroundColor Yellow
-            return $amount
+    $step = [ordered]@{ Method = 'Wheel'; Amount = 5; X = $Target.X; Y = $Target.Y; EndX = 0; EndY = 0 }
+    $window = Get-YbaTargetWindow -ProcessName $Target.ProcessName -WindowTitle $Target.WindowTitle
+    if ($null -eq $window) {
+        Write-Host '     Non trovo la finestra di Roblox per provarlo: lo salvo con la rotellina.' -ForegroundColor Yellow
+        $step.Amount = Read-Notches $step.Amount
+        return $step
+    }
+    Write-Host '     Provo lo scroll in 3 modi diversi, finché uno funziona.'
+    $wheelModes = [ordered]@{
+        Wheel   = 'Modo 1 di 3: rotellina del mouse'
+        Message = 'Modo 2 di 3: rotellina mandata direttamente a Roblox'
+    }
+    foreach ($mode in $wheelModes.Keys) {
+        Write-Host ('     ' + $wheelModes[$mode]) -ForegroundColor Cyan
+        $step.Method = $mode
+        while ($true) {
+            $step.Amount = Read-Notches $step.Amount
+            Invoke-SetupScroll $window $step $PauseMilliseconds
+            if (-not (Read-YesNo '     La pagina di Roblox si è mossa?' $true)) { break }
+            if (Read-YesNo '     Adesso si vede il punto da cliccare dopo?' $true) { return $step }
+            # Torna su: verso giù si scrolla un po' di più (la pagina si ferma in cima); verso su si torna indietro uguale.
+            $backAmount = if ($step.Amount -gt 0) { -($step.Amount + 20) } else { -$step.Amount }
+            Invoke-SetupScroll $window ([ordered]@{ Method = $mode; Amount = $backAmount; X = $step.X; Y = $step.Y }) 0
+            Write-Host '     Ho riportato la pagina com''era: prova con un altro numero.'
         }
-        Write-Host '     Lo provo adesso, piano come farà l''app: guarda la finestra.'
-        [YbaWin32]::FocusWindow($window.Handle)
-        Start-Sleep -Milliseconds 400
-        Invoke-YbaScroll -Handle $window.Handle -X ([int]$Target.X) -Y ([int]$Target.Y) -Notches $amount -PauseMilliseconds $PauseMilliseconds
-        Start-Sleep -Seconds 1
-        [YbaWin32]::FocusConsole()
-        if (Read-YesNo '     Adesso si vede il punto da cliccare dopo?' $true) { return $amount }
-        # Verso giù si torna in cima scrollando un po' di più (la pagina si ferma in cima); verso su si torna indietro uguale.
-        $back = if ($amount -gt 0) { -($amount + 20) } else { -$amount }
-        [YbaWin32]::FocusWindow($window.Handle)
-        Start-Sleep -Milliseconds 400
-        [void][YbaWin32]::ScrollInWindow($window.Handle, [int]$Target.X, [int]$Target.Y, $back, 80)
-        Start-Sleep -Seconds 1
-        [YbaWin32]::FocusConsole()
-        Write-Host '     Ho riportato la pagina com''era: prova con un altro numero.'
+    }
+    Write-Host '     Modo 3 di 3: trascinamento (come trascinare col mouse la pagina o la barra di scorrimento).' -ForegroundColor Cyan
+    $step.Method = 'Drag'
+    $step.Amount = 0
+    while ($true) {
+        $start = Read-ClickTarget -Label 'Inizio del trascinamento' -ExpectedProcess $Target.ProcessName -Hint 'il punto da cui trascinare (la pagina, oppure la barra di scorrimento)'
+        $end = Read-ClickTarget -Label 'Fine del trascinamento' -ExpectedProcess $Target.ProcessName -Hint 'il punto dove finire (pagina: più in ALTO; barra di scorrimento: più in BASSO)'
+        $step.X = $start.X
+        $step.Y = $start.Y
+        $step.EndX = $end.X
+        $step.EndY = $end.Y
+        Invoke-SetupScroll $window $step $PauseMilliseconds
+        if (Read-YesNo '     La pagina di Roblox si è mossa?' $true) {
+            if (Read-YesNo '     Adesso si vede il punto da cliccare dopo?' $true) { return $step }
+            Invoke-SetupScroll $window ([ordered]@{ Method = 'Drag'; X = $step.EndX; Y = $step.EndY; EndX = $step.X; EndY = $step.Y }) 0
+            Write-Host '     Ho riportato la pagina com''era: prova con altri punti.'
+        } elseif (-not (Read-YesNo '     Non si muove neanche così. Riprovo con altri punti?' $true)) {
+            Write-Host '     Nessun modo ha funzionato: salvo la rotellina, ma probabilmente lo scroll non andrà.' -ForegroundColor Yellow
+            $step.Method = 'Wheel'
+            $step.Amount = 5
+            $step.X = $Target.X
+            $step.Y = $Target.Y
+            return $step
+        }
     }
 }
 
 function New-ClickEntry {
-    param([string]$Name, $Target, [int]$DelayAfterSeconds, [string]$Type = 'Click', [int]$Amount = 0)
+    param([string]$Name, $Target, [int]$DelayAfterSeconds, [string]$Type = 'Click')
     [ordered]@{
         Name              = $Name
         Type              = $Type
-        Amount            = $Amount
         ProcessName       = $Target.ProcessName
         WindowTitle       = $Target.WindowTitle
         X                 = $Target.X
@@ -274,8 +314,10 @@ switch ($choice) {
             $withScroll = Read-YesNo '  Prima dei click serve scrollare?' $true
             if ($withScroll) {
                 $target = Read-ClickTarget -Label "Passo ${number}: SCROLL" -ExpectedProcess $robloxProcess -Hint 'la zona da scrollare'
-                $amount = Read-ScrollAmount $target $config.Join.ScrollPauseMilliseconds
-                $clicks += , (New-ClickEntry 'Scroll in Roblox' $target 3 -Type 'Scroll' -Amount $amount)
+                $entry = New-ClickEntry 'Scroll in Roblox' $target 3 -Type 'Scroll'
+                $scroll = Read-ScrollStep $target $config.Join.ScrollPauseMilliseconds
+                foreach ($key in $scroll.Keys) { $entry[$key] = $scroll[$key] }
+                $clicks += , $entry
                 $number++
             }
             $countPrompt = if ($withScroll) { '  Quanti click in Roblox dopo lo scroll?' } else { '  Quanti click in Roblox?' }

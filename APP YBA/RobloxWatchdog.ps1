@@ -68,15 +68,26 @@ function Invoke-ConfiguredClick {
         return $false
     }
     $isScroll = $Click.Type -eq 'Scroll'
-    if ($isScroll) { Write-YbaLog ("Scroll: {0} ({1} scatti)" -f $Click.Name, $Click.Amount) }
-    else { Write-YbaLog ("Click: {0}" -f $Click.Name) }
+    if ($isScroll) {
+        $how = switch ($Click.Method) {
+            'Drag'    { 'trascinamento' }
+            'Message' { '{0} scatti mandati direttamente a Roblox' -f $Click.Amount }
+            default   { '{0} scatti di rotellina' -f $Click.Amount }
+        }
+        Write-YbaLog ("Scroll: {0} ({1})" -f $Click.Name, $how)
+    } else {
+        Write-YbaLog ("Click: {0}" -f $Click.Name)
+    }
     if (-not $Script:IsAdmin -and [YbaWin32]::IsProcessElevated($window.ProcessId)) {
         Write-YbaLog ("{0}.exe è avviata come amministratore: Windows blocca il click. Avvia Avvia.bat come amministratore." -f $Click.ProcessName) Red
     }
     [YbaWin32]::FocusWindow($window.Handle)
     Start-Sleep -Milliseconds 500
+    if (-not [YbaWin32]::IsForeground($window.Handle)) {
+        Write-YbaLog ("Attenzione: Windows non mi lascia mettere in primo piano {0}.exe." -f $Click.ProcessName) Yellow
+    }
     if ($isScroll) {
-        Invoke-YbaScroll -Handle $window.Handle -X ([int]$Click.X) -Y ([int]$Click.Y) -Notches ([int]$Click.Amount) -PauseMilliseconds $ScrollPauseMilliseconds
+        Invoke-YbaScrollStep -Handle $window.Handle -Step $Click -PauseMilliseconds $ScrollPauseMilliseconds
     } else {
         [void][YbaWin32]::ClickInWindow($window.Handle, [int]$Click.X, [int]$Click.Y)
     }
