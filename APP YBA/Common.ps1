@@ -42,6 +42,8 @@ public static class YbaWin32
     private const uint KEYEVENTF_KEYUP = 0x0002;
     private const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
     private const uint MOUSEEVENTF_LEFTUP = 0x0004;
+    private const uint MOUSEEVENTF_WHEEL = 0x0800;
+    private const int WHEEL_DELTA = 120;
 
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
     [DllImport("user32.dll")] public static extern bool IsHungAppWindow(IntPtr hWnd);
@@ -211,22 +213,42 @@ public static class YbaWin32
         if (hWnd != IntPtr.Zero) FocusWindow(hWnd);
     }
 
-    public static bool ClickInWindow(IntPtr hWnd, int offsetX, int offsetY)
+    // Porta il mouse nel punto indicato della finestra.
+    // Piccolo movimento finale: alcune app (e Roblox) registrano click e rotellina solo dopo l'hover.
+    private static bool MoveInWindow(IntPtr hWnd, int offsetX, int offsetY)
     {
         RECT r;
         if (!GetWindowRect(hWnd, out r)) return false;
         int x = r.Left + offsetX;
         int y = r.Top + offsetY;
-        // Piccolo movimento prima del click: alcune app (e Roblox) registrano il click solo dopo l'hover.
         SetCursorPos(x, y);
         Thread.Sleep(60);
         SetCursorPos(x + 1, y);
         Thread.Sleep(40);
         SetCursorPos(x, y);
         Thread.Sleep(60);
+        return true;
+    }
+
+    public static bool ClickInWindow(IntPtr hWnd, int offsetX, int offsetY)
+    {
+        if (!MoveInWindow(hWnd, offsetX, offsetY)) return false;
         mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, UIntPtr.Zero);
         Thread.Sleep(60);
         mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, UIntPtr.Zero);
+        return true;
+    }
+
+    // Scatti di rotellina nel punto indicato: positivo = giù, negativo = su.
+    public static bool ScrollInWindow(IntPtr hWnd, int offsetX, int offsetY, int notches)
+    {
+        if (!MoveInWindow(hWnd, offsetX, offsetY)) return false;
+        int delta = notches > 0 ? -WHEEL_DELTA : WHEEL_DELTA;
+        for (int i = 0; i < Math.Abs(notches); i++)
+        {
+            mouse_event(MOUSEEVENTF_WHEEL, 0, 0, unchecked((uint)delta), UIntPtr.Zero);
+            Thread.Sleep(80);
+        }
         return true;
     }
 }

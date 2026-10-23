@@ -33,7 +33,13 @@ Non serve installare niente: usa PowerShell, che c'è già in Windows 10 e 11.
 4. **Come entrare in YBA**, scegli una di queste:
    - `1` se il bottone dell'app ti fa già entrare in YBA;
    - `2` per aprire YBA con il link `roblox://` (placeId `2809202155`, usa l'account loggato su Roblox);
-   - `3` per registrare dei click nella finestra di Roblox (per esempio l'icona di YBA e poi "Gioca"): mouse sopra + **F8** per ogni click, **F9** (oppure **F** nella finestra nera) quando hai finito.
+   - `3` per registrare i passi nella finestra di Roblox, in ordine (per esempio scroll, icona di YBA, "Gioca").
+     Parti con Roblox appena aperto, nella home in cima.
+     - **Click**: mouse sopra + **F8** (oppure **INVIO** nella finestra nera + 5 secondi).
+     - **Scroll**: mouse sopra la zona da scrollare + **F7** (oppure **S** nella finestra nera + 5 secondi).
+       Poi scrivi quanti scatti di rotellina (positivo = giù, negativo = su): il Setup lo prova subito
+       su Roblox e, se il bottone di YBA non si vede, torna su e ti fa provare un altro numero.
+     - **Fine**: **F9** (oppure **F** nella finestra nera).
 5. **I 2 click finali**: mouse sopra il primo bottone dell'app + **F8**, poi sopra il secondo + **F8**.
    Poi scegli quanti secondi aspettare (prima del primo click, il gioco deve fare in tempo a caricare) e quanti tra un click e l'altro.
 

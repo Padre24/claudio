@@ -59,20 +59,27 @@ function Stop-RobloxProcesses {
     }
 }
 
+# Esegue un passo registrato nel Setup: un click oppure (Type = 'Scroll') degli scatti di rotellina.
 function Invoke-ConfiguredClick {
     param($Click)
     $window = Get-YbaTargetWindow -ProcessName $Click.ProcessName -WindowTitle $Click.WindowTitle
     if ($null -eq $window) {
-        Write-YbaLog ("Non trovo la finestra di {0}.exe per il click '{1}'." -f $Click.ProcessName, $Click.Name) Red
+        Write-YbaLog ("Non trovo la finestra di {0}.exe per '{1}'." -f $Click.ProcessName, $Click.Name) Red
         return $false
     }
-    Write-YbaLog ("Click: {0}" -f $Click.Name)
+    $isScroll = $Click.Type -eq 'Scroll'
+    if ($isScroll) { Write-YbaLog ("Scroll: {0} ({1} scatti)" -f $Click.Name, $Click.Amount) }
+    else { Write-YbaLog ("Click: {0}" -f $Click.Name) }
     if (-not $Script:IsAdmin -and [YbaWin32]::IsProcessElevated($window.ProcessId)) {
         Write-YbaLog ("{0}.exe è avviata come amministratore: Windows blocca il click. Avvia Avvia.bat come amministratore." -f $Click.ProcessName) Red
     }
     [YbaWin32]::FocusWindow($window.Handle)
     Start-Sleep -Milliseconds 500
-    [void][YbaWin32]::ClickInWindow($window.Handle, [int]$Click.X, [int]$Click.Y)
+    if ($isScroll) {
+        [void][YbaWin32]::ScrollInWindow($window.Handle, [int]$Click.X, [int]$Click.Y, [int]$Click.Amount)
+    } else {
+        [void][YbaWin32]::ClickInWindow($window.Handle, [int]$Click.X, [int]$Click.Y)
+    }
     return $true
 }
 
@@ -127,7 +134,7 @@ function Enter-Game {
             return (Wait-RobloxWindow $Config)
         }
         'Clicks' {
-            Write-YbaLog 'Entro in Your Bizarre Adventure con i click registrati in Roblox.'
+            Write-YbaLog 'Entro in Your Bizarre Adventure con i passi registrati in Roblox.'
             Start-Sleep -Seconds ([int]$Config.Join.DelayBeforeSeconds)
             return (Invoke-ClickSequence $Config.Join.Clicks)
         }

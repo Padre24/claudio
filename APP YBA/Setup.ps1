@@ -3,6 +3,7 @@
 
 . (Join-Path $PSScriptRoot 'Common.ps1')
 
+$VK_F7 = 0x76
 $VK_F8 = 0x77
 $VK_F9 = 0x78
 $ConsoleProcesses = @('powershell', 'pwsh', 'WindowsTerminal', 'OpenConsole', 'conhost', 'cmd')
@@ -49,18 +50,22 @@ function Wait-KeyRelease {
     while ([YbaWin32]::IsKeyDown($Key)) { Start-Sleep -Milliseconds 30 }
 }
 
-# 'Now' = F8 premuto, 'Countdown' = INVIO premuto in questa finestra, 'Finish' = F9 o F in questa finestra.
-# F8 a volte non arriva (portatili senza Fn, app avviate come amministratore): INVIO funziona sempre.
+# Click = F8, Scroll = F7, Finish = F9 (tasti premuti ovunque).
+# ClickCountdown = INVIO, ScrollCountdown = S, Finish = F (tasti premuti in questa finestra).
+# F7/F8 a volte non arrivano (portatili senza Fn, app avviate come amministratore): INVIO e S funzionano sempre.
 function Wait-Trigger {
-    param([switch]$AllowFinish)
+    param([switch]$AllowFinish, [switch]$AllowScroll)
+    Wait-KeyRelease $VK_F7
     Wait-KeyRelease $VK_F8
     Wait-KeyRelease $VK_F9
     while ([YbaWin32]::ReadConsoleKey() -ne 0) { }
     while ($true) {
-        if ([YbaWin32]::IsKeyDown($VK_F8)) { Wait-KeyRelease $VK_F8; return 'Now' }
+        if ([YbaWin32]::IsKeyDown($VK_F8)) { Wait-KeyRelease $VK_F8; return 'Click' }
+        if ($AllowScroll -and [YbaWin32]::IsKeyDown($VK_F7)) { Wait-KeyRelease $VK_F7; return 'Scroll' }
         if ($AllowFinish -and [YbaWin32]::IsKeyDown($VK_F9)) { Wait-KeyRelease $VK_F9; return 'Finish' }
         $consoleKey = [YbaWin32]::ReadConsoleKey()
-        if ($consoleKey -eq [int][ConsoleKey]::Enter) { return 'Countdown' }
+        if ($consoleKey -eq [int][ConsoleKey]::Enter) { return 'ClickCountdown' }
+        if ($AllowScroll -and $consoleKey -eq [int][ConsoleKey]::S) { return 'ScrollCountdown' }
         if ($AllowFinish -and $consoleKey -eq [int][ConsoleKey]::F) { return 'Finish' }
         Start-Sleep -Milliseconds 30
     }
@@ -81,21 +86,24 @@ function Get-CursorTarget {
     }
 }
 
-# Registra la posizione del mouse quando l'utente preme F8 o dopo il conto alla rovescia (F9 = fine, se permesso).
+# Registra la posizione del mouse quando l'utente preme F8/F7 o dopo il conto alla rovescia (F9 = fine, se permesso).
+# Il risultato ha Action = 'Click' oppure 'Scroll'.
 function Read-ClickTarget {
-    param([string]$Label, [string]$ExpectedProcess = '', [switch]$AllowFinish)
+    param([string]$Label, [string]$ExpectedProcess = '', [switch]$AllowFinish, [switch]$AllowScroll)
     while ($true) {
         Write-Host ''
         Write-Host "  >> $Label" -ForegroundColor White
         Write-Host '     Metti il mouse SOPRA il punto da cliccare (senza cliccare) e premi F8 (sui portatili: Fn+F8).'
         Write-Host '     Se F8 non funziona: premi INVIO qui, poi hai 5 secondi per mettere il mouse sopra il punto.'
+        if ($AllowScroll) { Write-Host '     Per SCROLLARE invece: mouse sopra la zona da scrollare e premi F7 (oppure S qui + 5 secondi).' }
         if ($AllowFinish) { Write-Host '     Hai finito? Premi F9 (oppure F qui).' }
-        $trigger = Wait-Trigger -AllowFinish:$AllowFinish
+        $trigger = Wait-Trigger -AllowFinish:$AllowFinish -AllowScroll:$AllowScroll
         if ($trigger -eq 'Finish') {
             [YbaWin32]::FocusConsole()
             return $null
         }
-        if ($trigger -eq 'Countdown') {
+        $action = if ($trigger -like 'Scroll*') { 'Scroll' } else { 'Click' }
+        if ($trigger -like '*Countdown') {
             Write-Host '     Metti il mouse sopra il punto (deve essere visibile, non coperto da questa finestra): ' -NoNewline
             for ($second = 5; $second -ge 1; $second--) {
                 Write-Host "$second... " -NoNewline -ForegroundColor Cyan
@@ -114,19 +122,54 @@ function Read-ClickTarget {
             Write-Host "     Il mouse era sopra questa finestra nera: mettilo sopra l'app giusta e riprova." -ForegroundColor Yellow
             continue
         }
-        Write-Host ("     Registrato: finestra '{0}' ({1}.exe), punto X={2} Y={3} nella finestra." -f $target.WindowTitle, $target.ProcessName, $target.X, $target.Y) -ForegroundColor Green
+        $what = if ($action -eq 'Scroll') { 'Scroll' } else { 'Click' }
+        Write-Host ("     {0} registrato: finestra '{1}' ({2}.exe), punto X={3} Y={4} nella finestra." -f $what, $target.WindowTitle, $target.ProcessName, $target.X, $target.Y) -ForegroundColor Green
         if ($ExpectedProcess -and $target.ProcessName -ne $ExpectedProcess) {
             Write-Host "     Attenzione: mi aspettavo un punto dentro $ExpectedProcess.exe." -ForegroundColor Yellow
             if (-not (Read-YesNo '     Lo tengo lo stesso?' $false)) { continue }
         }
+        $target | Add-Member -NotePropertyName Action -NotePropertyValue $action
         return $target
     }
 }
 
+# Scroll che si vede subito: lo prova su Roblox e, se non va bene, torna su e fa riprovare con un altro numero.
+function Read-ScrollAmount {
+    param($Target)
+    $amount = 5
+    while ($true) {
+        do {
+            $amount = Read-Number '     Quanti scatti di rotellina? (positivo = giù, negativo = su)' $amount -100
+        } while ($amount -eq 0)
+        $window = Get-YbaTargetWindow -ProcessName $Target.ProcessName -WindowTitle $Target.WindowTitle
+        if ($null -eq $window) {
+            Write-Host '     Non trovo la finestra per provarlo: lo salvo così.' -ForegroundColor Yellow
+            return $amount
+        }
+        Write-Host '     Lo provo adesso: guarda la finestra.'
+        [YbaWin32]::FocusWindow($window.Handle)
+        Start-Sleep -Milliseconds 400
+        [void][YbaWin32]::ScrollInWindow($window.Handle, [int]$Target.X, [int]$Target.Y, $amount)
+        Start-Sleep -Seconds 1
+        [YbaWin32]::FocusConsole()
+        if (Read-YesNo '     Adesso si vede il punto da cliccare dopo?' $true) { return $amount }
+        # Verso giù si torna in cima scrollando un po' di più (la pagina si ferma in cima); verso su si torna indietro uguale.
+        $back = if ($amount -gt 0) { -($amount + 20) } else { -$amount }
+        [YbaWin32]::FocusWindow($window.Handle)
+        Start-Sleep -Milliseconds 400
+        [void][YbaWin32]::ScrollInWindow($window.Handle, [int]$Target.X, [int]$Target.Y, $back)
+        Start-Sleep -Seconds 1
+        [YbaWin32]::FocusConsole()
+        Write-Host '     Ho riportato la pagina com''era: prova con un altro numero.'
+    }
+}
+
 function New-ClickEntry {
-    param([string]$Name, $Target, [int]$DelayAfterSeconds)
+    param([string]$Name, $Target, [int]$DelayAfterSeconds, [string]$Type = 'Click', [int]$Amount = 0)
     [ordered]@{
         Name              = $Name
+        Type              = $Type
+        Amount            = $Amount
         ProcessName       = $Target.ProcessName
         WindowTitle       = $Target.WindowTitle
         X                 = $Target.X
@@ -225,21 +268,28 @@ switch ($choice) {
     '3' {
         $recordJoin = $true
         if ($config.Join.Method -eq 'Clicks' -and @($config.Join.Clicks).Count -gt 0) {
-            $recordJoin = Read-YesNo ("  Ci sono già {0} click registrati. Vuoi registrarli di nuovo?" -f @($config.Join.Clicks).Count) $false
+            $recordJoin = Read-YesNo ("  Ci sono già {0} passi registrati. Vuoi registrarli di nuovo?" -f @($config.Join.Clicks).Count) $false
         }
         $config.Join.Method = 'Clicks'
         if ($recordJoin) {
-            Write-Host '  Apri Roblox e lascialo nella schermata in cui si apre di solito (es. la home).'
+            Write-Host '  Apri Roblox e lascialo come quando si è appena aperto (nella home, in cima: non scrollare).'
+            Write-Host '  Poi registra i passi in ordine: per esempio prima lo scroll (F7), poi il click su YBA (F8),'
+            Write-Host '  poi il click su "Gioca" (F8), e infine F9.'
             $robloxProcess = $config.RobloxProcessNames[0]
             $clicks = @()
             while ($true) {
                 $number = $clicks.Count + 1
-                $target = Read-ClickTarget -Label "Click $number in Roblox" -ExpectedProcess $robloxProcess -AllowFinish:($number -gt 1)
+                $target = Read-ClickTarget -Label "Passo $number in Roblox" -ExpectedProcess $robloxProcess -AllowFinish:($number -gt 1) -AllowScroll
                 if ($null -eq $target) { break }
-                $clicks += , (New-ClickEntry "Click $number in Roblox" $target 3)
+                if ($target.Action -eq 'Scroll') {
+                    $amount = Read-ScrollAmount $target
+                    $clicks += , (New-ClickEntry "Scroll $number in Roblox" $target 3 -Type 'Scroll' -Amount $amount)
+                } else {
+                    $clicks += , (New-ClickEntry "Click $number in Roblox" $target 3)
+                }
             }
-            $config.Join.DelayBeforeSeconds = Read-Number '  Secondi da aspettare dopo che Roblox si apre, prima del 1° click' $config.Join.DelayBeforeSeconds
-            $delay = Read-Number '  Secondi di attesa dopo ogni click' 3
+            $config.Join.DelayBeforeSeconds = Read-Number '  Secondi da aspettare dopo che Roblox si apre, prima del 1° passo' $config.Join.DelayBeforeSeconds
+            $delay = Read-Number '  Secondi di attesa dopo ogni passo' 3
             foreach ($click in $clicks) { $click.DelayAfterSeconds = $delay }
             $config.Join.Clicks = $clicks
         }
