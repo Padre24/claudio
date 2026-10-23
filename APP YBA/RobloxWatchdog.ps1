@@ -120,7 +120,7 @@ function Enter-Game {
     param($Config)
     switch ($Config.Join.Method) {
         'Link' {
-            $uri = 'roblox://experiences/start?placeId=' + $Config.Join.PlaceId
+            $uri = 'roblox://placeId=' + $Config.Join.PlaceId
             Write-YbaLog "Entro in Your Bizarre Adventure con il link $uri"
             Start-Process $uri
             Start-Sleep -Seconds 5

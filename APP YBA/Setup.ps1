@@ -219,6 +219,7 @@ switch ($choice) {
     '1' { $config.Join.Method = 'None' }
     '2' {
         $config.Join.Method = 'Link'
+        Write-Host '  (il PlaceId è il numero nell''indirizzo della pagina del gioco: roblox.com/games/NUMERO/...)'
         $config.Join.PlaceId = Read-Answer '  PlaceId del gioco' $config.Join.PlaceId
     }
     '3' {
