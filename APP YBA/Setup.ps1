@@ -133,17 +133,22 @@ function Read-Notches {
     return $notches
 }
 
+# Rispondendo qui Roblox perde il mouse, come quando si è appena aperto: prima di ogni prova
+# si rifà il click iniziale, come farà l'app.
+function Invoke-SetupInitialClick {
+    param($Window, $InitialClick)
+    if (-not $InitialClick) { return }
+    [YbaWin32]::FocusWindow($Window.Handle)
+    Start-Sleep -Milliseconds 400
+    [void][YbaWin32]::ClickInWindow($Window.Handle, [int]$InitialClick.X, [int]$InitialClick.Y)
+    Start-Sleep -Milliseconds 500
+}
+
 # Fa lo scroll su Roblox esattamente come lo farà l'app, poi torna su questa finestra.
-# Prima fa il click iniziale: rispondendo qui Roblox perde il mouse, come quando si è appena aperto.
 function Invoke-SetupScroll {
     param($Window, $Step, [int]$PauseMilliseconds, $InitialClick)
     Write-Host '     Provo adesso: guarda Roblox.'
-    if ($InitialClick) {
-        [YbaWin32]::FocusWindow($Window.Handle)
-        Start-Sleep -Milliseconds 400
-        [void][YbaWin32]::ClickInWindow($Window.Handle, [int]$InitialClick.X, [int]$InitialClick.Y)
-        Start-Sleep -Milliseconds 500
-    }
+    Invoke-SetupInitialClick $Window $InitialClick
     Invoke-YbaScrollStep -Handle $Window.Handle -Step $Step -PauseMilliseconds $PauseMilliseconds
     Start-Sleep -Seconds 1
     [YbaWin32]::FocusConsole()
@@ -151,9 +156,10 @@ function Invoke-SetupScroll {
 
 # Prova lo scroll su Roblox in 3 modi, finché uno funziona: rotellina, rotellina mandata direttamente
 # a Roblox, trascinamento. Restituisce il modo (Method) e i suoi valori, da salvare nel passo.
+# -MovedIsEnough: basta che la pagina si muova (per la ricerca del gioco, che scrolla un po' alla volta).
 function Read-ScrollStep {
-    param($Target, [int]$PauseMilliseconds, $InitialClick)
-    $step = [ordered]@{ Method = 'Wheel'; Amount = 5; X = $Target.X; Y = $Target.Y; EndX = 0; EndY = 0 }
+    param($Target, [int]$PauseMilliseconds, $InitialClick, [int]$DefaultAmount = 5, [switch]$MovedIsEnough)
+    $step = [ordered]@{ Method = 'Wheel'; Amount = $DefaultAmount; X = $Target.X; Y = $Target.Y; EndX = 0; EndY = 0 }
     $window = Get-YbaTargetWindow -ProcessName $Target.ProcessName -WindowTitle $Target.WindowTitle
     if ($null -eq $window) {
         Write-Host '     Non trovo la finestra di Roblox per provarlo: lo salvo con la rotellina.' -ForegroundColor Yellow
@@ -172,7 +178,7 @@ function Read-ScrollStep {
             $step.Amount = Read-Notches $step.Amount
             Invoke-SetupScroll $window $step $PauseMilliseconds $InitialClick
             if (-not (Read-YesNo '     La pagina di Roblox si è mossa?' $true)) { break }
-            if (Read-YesNo '     Adesso si vede il punto da cliccare dopo?' $true) { return $step }
+            if ($MovedIsEnough -or (Read-YesNo '     Adesso si vede il punto da cliccare dopo?' $true)) { return $step }
             # Torna su: verso giù si scrolla un po' di più (la pagina si ferma in cima); verso su si torna indietro uguale.
             $backAmount = if ($step.Amount -gt 0) { -($step.Amount + 20) } else { -$step.Amount }
             Invoke-SetupScroll $window ([ordered]@{ Method = $mode; Amount = $backAmount; X = $step.X; Y = $step.Y }) 0 $InitialClick
@@ -191,17 +197,122 @@ function Read-ScrollStep {
         $step.EndY = $end.Y
         Invoke-SetupScroll $window $step $PauseMilliseconds $InitialClick
         if (Read-YesNo '     La pagina di Roblox si è mossa?' $true) {
-            if (Read-YesNo '     Adesso si vede il punto da cliccare dopo?' $true) { return $step }
+            if ($MovedIsEnough -or (Read-YesNo '     Adesso si vede il punto da cliccare dopo?' $true)) { return $step }
             Invoke-SetupScroll $window ([ordered]@{ Method = 'Drag'; X = $step.EndX; Y = $step.EndY; EndX = $step.X; EndY = $step.Y }) 0 $InitialClick
             Write-Host '     Ho riportato la pagina com''era: prova con altri punti.'
         } elseif (-not (Read-YesNo '     Non si muove neanche così. Riprovo con altri punti?' $true)) {
             Write-Host '     Nessun modo ha funzionato: salvo la rotellina, ma probabilmente lo scroll non andrà.' -ForegroundColor Yellow
             $step.Method = 'Wheel'
-            $step.Amount = 5
+            $step.Amount = $DefaultAmount
             $step.X = $Target.X
             $step.Y = $Target.Y
             return $step
         }
+    }
+}
+
+function Show-ScreenLines {
+    param($Lines)
+    $all = @($Lines)
+    if ($all.Count -eq 0) {
+        Write-Host '     (non leggo nessuna scritta)' -ForegroundColor Yellow
+        return
+    }
+    Write-Host '     Scritte che leggo su Roblox:'
+    foreach ($line in ($all | Select-Object -First 25)) { Write-Host ('       - ' + $line.Text) -ForegroundColor DarkGray }
+    if ($all.Count -gt 25) { Write-Host ('       ... e altre {0}' -f ($all.Count - 25)) -ForegroundColor DarkGray }
+}
+
+# Legge le scritte nella finestra di Roblox ($null = lo schermo non si riesce a leggere).
+function Read-RobloxScreen {
+    param($Window)
+    [YbaWin32]::FocusWindow($Window.Handle)
+    Start-Sleep -Milliseconds 700
+    $lines = Get-YbaScreenLines -Handle $Window.Handle
+    [YbaWin32]::FocusConsole()
+    if ($null -eq $lines) { return $null }
+    # La virgola tiene la lista anche se è vuota (sennò arriverebbe $null, cioè "non leggibile").
+    return , $lines
+}
+
+# Passo "Cerca": l'app legge lo schermo, se vede il nome del gioco lo clicca, sennò scrolla e riprova.
+# Restituisce il passo da salvare, oppure $null se qui lo schermo non si riesce a leggere.
+function Read-FindStep {
+    param($Config, [string]$RobloxProcess, [int]$Number)
+    $title = if ($Config.Join.InitialClick) { $Config.Join.InitialClick.WindowTitle } else { 'Roblox' }
+    $window = Get-YbaTargetWindow -ProcessName $RobloxProcess -WindowTitle $title
+    if ($null -eq $window) {
+        Write-Host '  Non trovo la finestra di Roblox: aprila e rifai il Setup.' -ForegroundColor Yellow
+        return $null
+    }
+    Write-Host '  Basta l''inizio del nome: i nomi lunghi nella home di Roblox vengono tagliati.'
+    $text = Read-Answer '  Scritta da cercare' 'Your Bizarre'
+    Write-Host '  Leggo lo schermo di Roblox (la finestra nera non deve coprire Roblox)...'
+    $lines = Read-RobloxScreen $window
+    if ($null -eq $lines) {
+        Write-Host '  Non riesco a leggere lo schermo su questo PC: niente ricerca, uso lo scroll fisso.' -ForegroundColor Yellow
+        return $null
+    }
+    Show-ScreenLines $lines
+    if ($null -ne (Find-YbaText -Lines $lines -Needle $text)) {
+        Write-Host '  Il gioco si vede già in questa schermata.' -ForegroundColor Green
+    } else {
+        Write-Host '  In questa schermata il gioco non c''è: l''app scrollerà per cercarlo.'
+    }
+    Write-Host '  Ora lo scroll che l''app farà per cercare più in basso (meglio pochi scatti alla volta).'
+    $target = Read-ClickTarget -Label "Passo ${Number}: SCROLL per cercare il gioco" -ExpectedProcess $RobloxProcess -Hint 'la zona da scrollare'
+    $entry = New-ClickEntry 'Cerca il gioco' $target 3 -Type 'Find'
+    $scroll = Read-ScrollStep $target $Config.Join.ScrollPauseMilliseconds $Config.Join.InitialClick -DefaultAmount 3 -MovedIsEnough
+    foreach ($key in $scroll.Keys) { $entry[$key] = $scroll[$key] }
+    $entry.Text = $text
+    $entry.MaxScrolls = Read-Number '  Quante volte al massimo scrollo prima di arrendermi (e riavviare Roblox)?' 15 1
+    if (Read-YesNo '  Provo adesso la ricerca completa? (prima riporta Roblox nella home, in cima)' $true) {
+        Invoke-SetupInitialClick $window $Config.Join.InitialClick
+        $result = Invoke-YbaFind -Handle $window.Handle -Step $entry -PauseMilliseconds $Config.Join.ScrollPauseMilliseconds
+        [YbaWin32]::FocusConsole()
+        switch ($result) {
+            'Found' { Write-Host '  Trovato e cliccato!' -ForegroundColor Green }
+            'NotFound' { Write-Host '  Non l''ho trovato: controlla la scritta da cercare, oppure aumenta gli scatti o i tentativi.' -ForegroundColor Yellow }
+            default { Write-Host '  Non riesco a leggere lo schermo.' -ForegroundColor Yellow }
+        }
+    }
+    return $entry
+}
+
+# Scritta che si vede SOLO nella schermata di caricamento di YBA: la si sceglie tra quelle lette sullo schermo.
+function Read-LoadingText {
+    param($Config)
+    Write-Host '  Entra in YBA (anche a mano). Quando vedi la schermata di caricamento di YBA, premi F8'
+    Write-Host '  (oppure INVIO qui, poi hai 5 secondi per far vedere Roblox): leggo cosa c''è scritto.'
+    while ($true) {
+        if ((Wait-Trigger) -eq 'Countdown') {
+            for ($second = 5; $second -ge 1; $second--) {
+                Write-Host "$second... " -NoNewline -ForegroundColor Cyan
+                Start-Sleep -Seconds 1
+            }
+            Write-Host ''
+        }
+        $window = Get-YbaTargetWindow -ProcessName $Config.RobloxProcessNames[0] -WindowTitle 'Roblox'
+        if ($null -eq $window) {
+            Write-Host '  Non trovo Roblox: aprilo, poi premi di nuovo F8.' -ForegroundColor Yellow
+            continue
+        }
+        $lines = Read-RobloxScreen $window
+        if ($null -eq $lines) {
+            Write-Host '  Non riesco a leggere lo schermo su questo PC: niente controllo del caricamento.' -ForegroundColor Yellow
+            return ''
+        }
+        Show-ScreenLines $lines
+        $text = Read-Answer '  Scrivi una parola che c''è SOLO nella schermata di caricamento (Invio = rileggi, - = lascia perdere)'
+        if ($text -eq '-') { return '' }
+        if ($text) {
+            if ($null -ne (Find-YbaText -Lines $lines -Needle $text)) {
+                Write-Host '  Perfetto, la vedo.' -ForegroundColor Green
+                return $text
+            }
+            if (Read-YesNo '  Non la trovo tra le scritte lette. La tengo lo stesso?' $false) { return $text }
+        }
+        Write-Host '  Premi F8 (o INVIO) quando vuoi che rilegga lo schermo.'
     }
 }
 
@@ -334,7 +445,19 @@ switch ($choice) {
         if ($recordJoin) {
             $clicks = @()
             $number = 1
-            $withScroll = Read-YesNo '  Prima dei click serve scrollare?' $true
+            Write-Host '  Se il gioco non è sempre nello stesso posto, l''app può CERCARLO: legge le scritte su Roblox,'
+            Write-Host '  se vede il nome del gioco lo clicca, sennò scrolla e riprova; se non lo trova chiude Roblox e ricomincia.'
+            $withSearch = Read-YesNo '  Vuoi che l''app cerchi il gioco sullo schermo?' $true
+            if ($withSearch) {
+                $find = Read-FindStep $config $robloxProcess $number
+                if ($null -ne $find) {
+                    $clicks += , $find
+                    $number++
+                } else {
+                    $withSearch = $false
+                }
+            }
+            $withScroll = (-not $withSearch) -and (Read-YesNo '  Prima dei click serve scrollare?' $true)
             if ($withScroll) {
                 $target = Read-ClickTarget -Label "Passo ${number}: SCROLL" -ExpectedProcess $robloxProcess -Hint 'la zona da scrollare'
                 $entry = New-ClickEntry 'Scroll in Roblox' $target 3 -Type 'Scroll'
@@ -343,8 +466,13 @@ switch ($choice) {
                 $clicks += , $entry
                 $number++
             }
-            $countPrompt = if ($withScroll) { '  Quanti click in Roblox dopo lo scroll?' } else { '  Quanti click in Roblox?' }
-            $count = Read-Number $countPrompt 2 1
+            if ($withSearch) {
+                Write-Host '  Ora i click dopo aver aperto il gioco (es. "Gioca"): se la ricerca non l''ha aperto, aprilo tu.'
+                $count = Read-Number '  Quanti click dopo aver cliccato il gioco?' 1 0
+            } else {
+                $countPrompt = if ($withScroll) { '  Quanti click in Roblox dopo lo scroll?' } else { '  Quanti click in Roblox?' }
+                $count = Read-Number $countPrompt 2 1
+            }
             for ($i = 1; $i -le $count; $i++) {
                 while ($true) {
                     $target = Read-ClickTarget -Label "Passo ${number}: CLICK $i di $count" -ExpectedProcess $robloxProcess
@@ -361,6 +489,23 @@ switch ($choice) {
         Write-Host '  Prima del 1° passo Roblox deve aver caricato tutta la home (sennò lo scroll si ferma prima).'
         $config.Join.DelayBeforeSeconds = Read-Number '  Secondi da aspettare dopo che Roblox si apre (consigliati almeno 20)' $config.Join.DelayBeforeSeconds
     }
+}
+
+# Schermata di caricamento bloccata (vale per tutti i modi di entrare nel gioco).
+Write-Host ''
+Write-Host '  A volte YBA resta bloccato nella schermata di caricamento: l''app può accorgersene leggendo lo schermo'
+Write-Host '  e riavviare Roblox.'
+if (Read-YesNo '  Vuoi questo controllo?' $true) {
+    $changeText = $true
+    if ($config.Join.LoadingText) {
+        $changeText = Read-YesNo ("  Ora controllo la scritta '{0}'. Vuoi cambiarla?" -f $config.Join.LoadingText) $false
+    }
+    if ($changeText) { $config.Join.LoadingText = Read-LoadingText $config }
+    if ($config.Join.LoadingText) {
+        $config.Join.LoadingTimeoutSeconds = Read-Number '  Dopo quanti secondi di caricamento lo considero bloccato?' $config.Join.LoadingTimeoutSeconds 30
+    }
+} else {
+    $config.Join.LoadingText = ''
 }
 
 # 5. Click finali sull'app

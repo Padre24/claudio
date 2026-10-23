@@ -94,13 +94,76 @@ function Invoke-ConfiguredClick {
     return $true
 }
 
+# Passo "Cerca": legge lo schermo di Roblox e clicca il gioco, scrollando finché non lo trova.
+function Invoke-FindStep {
+    param($Step, [int]$ScrollPauseMilliseconds = 1500)
+    $window = Get-YbaTargetWindow -ProcessName $Step.ProcessName -WindowTitle $Step.WindowTitle
+    if ($null -eq $window) {
+        Write-YbaLog ("Non trovo la finestra di {0}.exe per cercare il gioco." -f $Step.ProcessName) Red
+        return $false
+    }
+    Write-YbaLog ("Cerco il gioco sullo schermo (al massimo {0} scroll)..." -f $Step.MaxScrolls)
+    $result = Invoke-YbaFind -Handle $window.Handle -Step $Step -PauseMilliseconds $ScrollPauseMilliseconds
+    switch ($result) {
+        'Found' { return $true }
+        'Unreadable' { Write-YbaLog 'Non riesco a leggere lo schermo (monitor spento da Windows o schermo bloccato?).' Red }
+        default { Write-YbaLog ("Gioco non trovato dopo {0} scroll." -f $Step.MaxScrolls) Red }
+    }
+    return $false
+}
+
 function Invoke-ClickSequence {
     param([object[]]$Clicks, [int]$ScrollPauseMilliseconds = 1500)
     foreach ($click in @($Clicks)) {
-        if (-not (Invoke-ConfiguredClick $click $ScrollPauseMilliseconds)) { return $false }
+        $done = if ($click.Type -eq 'Find') { Invoke-FindStep $click $ScrollPauseMilliseconds } else { Invoke-ConfiguredClick $click $ScrollPauseMilliseconds }
+        if (-not $done) { return $false }
         Start-Sleep -Seconds ([int]$click.DelayAfterSeconds)
     }
     return $true
+}
+
+# Se YBA resta nella schermata di caricamento (si vede ancora la scritta LoadingText dopo
+# LoadingTimeoutSeconds), restituisce $false. Se la scritta non compare proprio, va avanti.
+function Wait-YbaGameLoaded {
+    param($Config)
+    $text = [string]$Config.Join.LoadingText
+    if (-not $text) { return $true }
+    $timeout = [int]$Config.Join.LoadingTimeoutSeconds
+    Write-YbaLog "Controllo che il gioco finisca di caricare (massimo $timeout secondi)..."
+    $start = Get-Date
+    $seen = $false
+    $goneChecks = 0
+    while ($true) {
+        $windows = @(Get-RobloxGameWindows $Config)
+        if ($windows.Count -eq 0) {
+            Write-YbaLog 'Roblox si è chiuso durante il caricamento.' Yellow
+            return $false
+        }
+        [YbaWin32]::WakeDisplay()
+        $lines = Get-YbaScreenLines -Handle $windows[0].Handle
+        $visible = $null -ne $lines -and $null -ne (Find-YbaText -Lines $lines -Needle $text)
+        if ($visible) {
+            $seen = $true
+            $goneChecks = 0
+        } else {
+            $goneChecks++
+        }
+        $elapsed = ((Get-Date) - $start).TotalSeconds
+        if ($seen -and $goneChecks -ge 2) {
+            Write-YbaLog 'Il gioco ha finito di caricare.' Green
+            return $true
+        }
+        if (-not $seen -and $elapsed -ge [Math]::Min(90, $timeout)) {
+            Write-YbaLog 'Non vedo la schermata di caricamento: vado avanti.'
+            return $true
+        }
+        if ($elapsed -ge $timeout) {
+            if (-not $visible) { return $true }
+            Write-YbaLog "YBA è bloccato nella schermata di caricamento da più di $timeout secondi." Red
+            return $false
+        }
+        Start-Sleep -Seconds 5
+    }
 }
 
 # Apre l'app che lancia Roblox (se non è già aperta) e restituisce la sua finestra.
@@ -139,13 +202,13 @@ function Enter-Game {
     switch ($Config.Join.Method) {
         'Link' {
             $uri = 'roblox://placeId=' + $Config.Join.PlaceId
-            Write-YbaLog "Entro in Your Bizarre Adventure con il link $uri"
+            Write-YbaLog "Entro in YBA con il link $uri"
             Start-Process $uri
             Start-Sleep -Seconds 5
             return (Wait-RobloxWindow $Config)
         }
         'Clicks' {
-            Write-YbaLog 'Entro in Your Bizarre Adventure con i passi registrati in Roblox.'
+            Write-YbaLog 'Entro in YBA con i passi registrati in Roblox.'
             # Click iniziale appena Roblox si apre (senza, Roblox non "prende" il mouse) e di nuovo prima dei passi.
             $initial = $Config.Join.InitialClick
             if ($initial) { [void](Invoke-ConfiguredClick $initial) }
@@ -157,7 +220,7 @@ function Enter-Game {
             return (Invoke-ClickSequence $Config.Join.Clicks $Config.Join.ScrollPauseMilliseconds)
         }
         default {
-            Write-YbaLog "Il bottone dell'app entra già in Your Bizarre Adventure."
+            Write-YbaLog "Il bottone dell'app entra già in YBA."
             return $true
         }
     }
@@ -186,8 +249,18 @@ function Invoke-Recovery {
     if (-not (Wait-RobloxWindow $Config)) { return }
     Write-YbaLog 'Roblox aperto.' Green
 
-    # Step 4: entrare nel gioco.
-    if (-not (Enter-Game $Config)) { return }
+    # Step 4: entrare nel gioco. Se non ci riesce (gioco non trovato, bloccato nel caricamento...)
+    # chiude Roblox: al prossimo controllo risulta chiuso e si ricomincia dallo step 1.
+    if (-not (Enter-Game $Config)) {
+        Write-YbaLog 'Non sono riuscito a entrare nel gioco: chiudo Roblox e ricomincio.' Yellow
+        Stop-RobloxProcesses $Config
+        return
+    }
+    if (-not (Wait-YbaGameLoaded $Config)) {
+        Write-YbaLog 'Chiudo Roblox e ricomincio.' Yellow
+        Stop-RobloxProcesses $Config
+        return
+    }
 
     # Step 5: i click finali sull'app.
     $finalClicks = @($Config.FinalClicks.Clicks)

@@ -178,6 +178,24 @@ public static class YbaWin32
         return sb.ToString();
     }
 
+    [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdc, uint flags);
+    [DllImport("kernel32.dll")] private static extern uint SetThreadExecutionState(uint flags);
+    private const uint ES_DISPLAY_REQUIRED = 0x00000002;
+
+    // Sinistra, alto, larghezza, altezza della finestra (null se non esiste più).
+    public static int[] GetWindowBounds(IntPtr hWnd)
+    {
+        RECT r;
+        if (!GetWindowRect(hWnd, out r)) return null;
+        return new int[] { r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top };
+    }
+
+    // Riaccende lo schermo se Windows l'ha spento per inattività (serve per leggere le scritte).
+    public static void WakeDisplay()
+    {
+        SetThreadExecutionState(ES_DISPLAY_REQUIRED);
+    }
+
     public static int GetProcessId(IntPtr hWnd)
     {
         uint pid;
@@ -233,6 +251,20 @@ public static class YbaWin32
             if (attached) AttachThreadInput(thisThread, foregroundThread, false);
         }
         if (GetForegroundWindow() != hWnd) SwitchToThisWindow(hWnd, true);
+    }
+
+    // true se in quel punto dello schermo si vede davvero questa finestra (non è coperta da un'altra).
+    public static bool IsPointOnWindow(IntPtr hWnd, int offsetX, int offsetY)
+    {
+        RECT r;
+        if (!GetWindowRect(hWnd, out r)) return false;
+        POINT p;
+        p.X = r.Left + offsetX;
+        p.Y = r.Top + offsetY;
+        IntPtr under = WindowFromPoint(p);
+        if (under == IntPtr.Zero) return false;
+        IntPtr root = GetAncestor(under, GA_ROOT);
+        return root == hWnd || GetProcessId(under) == GetProcessId(hWnd);
     }
 
     public static bool IsForeground(IntPtr hWnd)
@@ -352,6 +384,61 @@ public static class YbaWin32
 '@
 }
 
+if (-not ('YbaText' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Text;
+
+// Confronto delle scritte lette sullo schermo, che a volte hanno qualche lettera sbagliata.
+public static class YbaText
+{
+    // Solo lettere e numeri, in minuscolo: "Your Bizarre Adventure" -> "yourbizarreadventure".
+    public static string Normalize(string text)
+    {
+        StringBuilder sb = new StringBuilder();
+        foreach (char c in (text ?? "").ToLowerInvariant())
+            if (char.IsLetterOrDigit(c)) sb.Append(c);
+        return sb.ToString();
+    }
+
+    // Quante lettere bisogna cambiare, aggiungere o togliere per passare da a a b.
+    public static int Distance(string a, string b)
+    {
+        int[] previous = new int[b.Length + 1];
+        int[] current = new int[b.Length + 1];
+        for (int j = 0; j <= b.Length; j++) previous[j] = j;
+        for (int i = 1; i <= a.Length; i++)
+        {
+            current[0] = i;
+            for (int j = 1; j <= b.Length; j++)
+            {
+                int cost = a[i - 1] == b[j - 1] ? 0 : 1;
+                current[j] = Math.Min(Math.Min(previous[j] + 1, current[j - 1] + 1), previous[j - 1] + cost);
+            }
+            int[] swap = previous;
+            previous = current;
+            current = swap;
+        }
+        return previous[b.Length];
+    }
+
+    // true se needle compare dentro text, ammettendo circa una lettera sbagliata ogni 5.
+    public static bool FuzzyContains(string text, string needle)
+    {
+        string t = Normalize(text);
+        string n = Normalize(needle);
+        if (n.Length == 0) return false;
+        if (t.Contains(n)) return true;
+        int maxErrors = Math.Max(1, n.Length / 5);
+        for (int length = Math.Max(1, n.Length - maxErrors); length <= n.Length + maxErrors; length++)
+            for (int start = 0; start + length <= t.Length; start++)
+                if (Distance(t.Substring(start, length), n) <= maxErrors) return true;
+        return false;
+    }
+}
+'@
+}
+
 function Initialize-YbaEnvironment {
     # Discord accetta solo TLS 1.2+; su alcuni Windows PowerShell 5.1 non è attivo di default.
     try {
@@ -395,6 +482,8 @@ function Get-YbaDefaultConfig {
             ScrollPauseMilliseconds = 1500
             InitialClick            = $null
             Clicks                  = @()
+            LoadingText             = ''
+            LoadingTimeoutSeconds   = 120
         }
         FinalClicks                = [ordered]@{
             DelayBeforeSeconds = 30
@@ -516,6 +605,68 @@ function Invoke-YbaScrollStep {
     }
 }
 
+# Cerca $Needle tra le scritte lette sullo schermo (vedi Ocr.ps1).
+# Restituisce il centro delle parole trovate, in pixel rispetto alla finestra, oppure $null.
+function Find-YbaText {
+    param($Lines, [string]$Needle)
+    foreach ($line in @($Lines)) {
+        $words = @($line.Words)
+        if ($words.Count -eq 0 -or -not [YbaText]::FuzzyContains($line.Text, $Needle)) { continue }
+        # Le parole della riga che contengono il testo cercato (la sequenza più corta).
+        $first = 0
+        $last = $words.Count - 1
+        for ($i = 0; $i -lt $words.Count; $i++) {
+            $joined = ''
+            for ($j = $i; $j -lt $words.Count; $j++) {
+                $joined += $words[$j].Text
+                if ([YbaText]::FuzzyContains($joined, $Needle)) {
+                    if (($j - $i) -lt ($last - $first)) { $first = $i; $last = $j }
+                    break
+                }
+            }
+        }
+        $span = $words[$first..$last]
+        $left = ($span | Measure-Object -Property X -Minimum).Minimum
+        $top = ($span | Measure-Object -Property Y -Minimum).Minimum
+        $right = ($span | ForEach-Object { $_.X + $_.Width } | Measure-Object -Maximum).Maximum
+        $bottom = ($span | ForEach-Object { $_.Y + $_.Height } | Measure-Object -Maximum).Maximum
+        return [pscustomobject]@{ X = [int](($left + $right) / 2); Y = [int](($top + $bottom) / 2); Text = $line.Text }
+    }
+    return $null
+}
+
+# Cerca la scritta del passo (Text) su Roblox: se la vede la clicca, sennò scrolla (come il passo
+# di scroll registrato) e riprova, al massimo MaxScrolls volte.
+# Restituisce 'Found', 'NotFound' oppure 'Unreadable' (lo schermo non si riesce a leggere).
+function Invoke-YbaFind {
+    param([IntPtr]$Handle, $Step, [int]$PauseMilliseconds = 1500)
+    [YbaWin32]::WakeDisplay()
+    $maxScrolls = [int]$Step.MaxScrolls
+    for ($attempt = 0; $attempt -le $maxScrolls; $attempt++) {
+        [YbaWin32]::FocusWindow($Handle)
+        Start-Sleep -Milliseconds 700
+        $lines = Get-YbaScreenLines -Handle $Handle
+        if ($null -eq $lines) { return 'Unreadable' }
+        $match = Find-YbaText -Lines $lines -Needle $Step.Text
+        if ($null -ne $match -and -not [YbaWin32]::IsPointOnWindow($Handle, $match.X, $match.Y)) {
+            Write-YbaLog 'Il gioco è coperto da un''altra finestra: non clicco.' Yellow
+            $match = $null
+        }
+        if ($null -ne $match) {
+            # Il nome del gioco non va scritto qui: se questa finestra coprisse Roblox, verrebbe letto anche da qui.
+            Write-YbaLog 'Gioco trovato sullo schermo: lo clicco.' Green
+            [void][YbaWin32]::ClickInWindow($Handle, $match.X, $match.Y)
+            return 'Found'
+        }
+        if ($attempt -lt $maxScrolls) {
+            Write-YbaLog ('Il gioco non si vede: scrollo e riprovo ({0}/{1}).' -f ($attempt + 1), $maxScrolls)
+            Invoke-YbaScrollStep -Handle $Handle -Step $Step -PauseMilliseconds $PauseMilliseconds
+            Start-Sleep -Seconds 2
+        }
+    }
+    return 'NotFound'
+}
+
 function Send-YbaDiscordMessage {
     param($Config, [string]$Text)
     if ([string]::IsNullOrWhiteSpace($Config.WebhookUrl)) {
@@ -540,3 +691,5 @@ function Send-YbaDiscordMessage {
         return $false
     }
 }
+
+. (Join-Path $PSScriptRoot 'Ocr.ps1')
