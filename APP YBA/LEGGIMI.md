@@ -81,6 +81,7 @@ Si può modificare con il Blocco note (meglio con APP YBA chiusa):
 | `RobloxWindowTimeoutSeconds` | `60` | Tempo massimo perché compaia la finestra di Roblox |
 | `Launcher.StartupTimeoutSeconds` | `30` | Tempo massimo per l'apertura della tua app |
 | `Launcher.LoadDelaySeconds` | `3` | Attesa dopo l'apertura dell'app, prima del click |
-| `Join.DelayBeforeSeconds` | `10` | (scelta 3) attesa prima dei click in Roblox |
+| `Join.DelayBeforeSeconds` | `20` | (scelta 3) attesa dopo l'apertura di Roblox, prima dei passi: la home deve essere caricata |
+| `Join.ScrollPauseMilliseconds` | `1500` | (scelta 3) pausa ogni 5 scatti di scroll, per dare tempo a Roblox di caricare la home. Se lo scroll si ferma prima, aumentala (es. `3000`) |
 | `FinalClicks.DelayBeforeSeconds` | `30` | Attesa dopo l'ingresso nel gioco, prima dei click finali |
 | `...Clicks[].DelayAfterSeconds` | `2`/`3` | Attesa dopo ogni click |

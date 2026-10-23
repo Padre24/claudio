@@ -61,7 +61,7 @@ function Stop-RobloxProcesses {
 
 # Esegue un passo registrato nel Setup: un click oppure (Type = 'Scroll') degli scatti di rotellina.
 function Invoke-ConfiguredClick {
-    param($Click)
+    param($Click, [int]$ScrollPauseMilliseconds = 1500)
     $window = Get-YbaTargetWindow -ProcessName $Click.ProcessName -WindowTitle $Click.WindowTitle
     if ($null -eq $window) {
         Write-YbaLog ("Non trovo la finestra di {0}.exe per '{1}'." -f $Click.ProcessName, $Click.Name) Red
@@ -76,7 +76,7 @@ function Invoke-ConfiguredClick {
     [YbaWin32]::FocusWindow($window.Handle)
     Start-Sleep -Milliseconds 500
     if ($isScroll) {
-        [void][YbaWin32]::ScrollInWindow($window.Handle, [int]$Click.X, [int]$Click.Y, [int]$Click.Amount)
+        Invoke-YbaScroll -Handle $window.Handle -X ([int]$Click.X) -Y ([int]$Click.Y) -Notches ([int]$Click.Amount) -PauseMilliseconds $ScrollPauseMilliseconds
     } else {
         [void][YbaWin32]::ClickInWindow($window.Handle, [int]$Click.X, [int]$Click.Y)
     }
@@ -84,9 +84,9 @@ function Invoke-ConfiguredClick {
 }
 
 function Invoke-ClickSequence {
-    param([object[]]$Clicks)
+    param([object[]]$Clicks, [int]$ScrollPauseMilliseconds = 1500)
     foreach ($click in @($Clicks)) {
-        if (-not (Invoke-ConfiguredClick $click)) { return $false }
+        if (-not (Invoke-ConfiguredClick $click $ScrollPauseMilliseconds)) { return $false }
         Start-Sleep -Seconds ([int]$click.DelayAfterSeconds)
     }
     return $true
@@ -136,7 +136,7 @@ function Enter-Game {
         'Clicks' {
             Write-YbaLog 'Entro in Your Bizarre Adventure con i passi registrati in Roblox.'
             Start-Sleep -Seconds ([int]$Config.Join.DelayBeforeSeconds)
-            return (Invoke-ClickSequence $Config.Join.Clicks)
+            return (Invoke-ClickSequence $Config.Join.Clicks $Config.Join.ScrollPauseMilliseconds)
         }
         default {
             Write-YbaLog "Il bottone dell'app entra già in Your Bizarre Adventure."

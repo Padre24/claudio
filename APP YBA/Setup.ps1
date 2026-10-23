@@ -125,9 +125,10 @@ function Test-RecordedClick {
     return (Read-YesNo '     Ha funzionato?' $true)
 }
 
-# Scroll che si vede subito: lo prova su Roblox e, se non va bene, torna su e fa riprovare con un altro numero.
+# Scroll che si vede subito: lo prova su Roblox (uguale a come lo farà l'app) e, se non va bene,
+# torna su e fa riprovare con un altro numero.
 function Read-ScrollAmount {
-    param($Target)
+    param($Target, [int]$PauseMilliseconds)
     $amount = 5
     while ($true) {
         do {
@@ -138,10 +139,10 @@ function Read-ScrollAmount {
             Write-Host '     Non trovo la finestra per provarlo: lo salvo così.' -ForegroundColor Yellow
             return $amount
         }
-        Write-Host '     Lo provo adesso: guarda la finestra.'
+        Write-Host '     Lo provo adesso, piano come farà l''app: guarda la finestra.'
         [YbaWin32]::FocusWindow($window.Handle)
         Start-Sleep -Milliseconds 400
-        [void][YbaWin32]::ScrollInWindow($window.Handle, [int]$Target.X, [int]$Target.Y, $amount)
+        Invoke-YbaScroll -Handle $window.Handle -X ([int]$Target.X) -Y ([int]$Target.Y) -Notches $amount -PauseMilliseconds $PauseMilliseconds
         Start-Sleep -Seconds 1
         [YbaWin32]::FocusConsole()
         if (Read-YesNo '     Adesso si vede il punto da cliccare dopo?' $true) { return $amount }
@@ -149,7 +150,7 @@ function Read-ScrollAmount {
         $back = if ($amount -gt 0) { -($amount + 20) } else { -$amount }
         [YbaWin32]::FocusWindow($window.Handle)
         Start-Sleep -Milliseconds 400
-        [void][YbaWin32]::ScrollInWindow($window.Handle, [int]$Target.X, [int]$Target.Y, $back)
+        [void][YbaWin32]::ScrollInWindow($window.Handle, [int]$Target.X, [int]$Target.Y, $back, 80)
         Start-Sleep -Seconds 1
         [YbaWin32]::FocusConsole()
         Write-Host '     Ho riportato la pagina com''era: prova con un altro numero.'
@@ -273,7 +274,7 @@ switch ($choice) {
             $withScroll = Read-YesNo '  Prima dei click serve scrollare?' $true
             if ($withScroll) {
                 $target = Read-ClickTarget -Label "Passo ${number}: SCROLL" -ExpectedProcess $robloxProcess -Hint 'la zona da scrollare'
-                $amount = Read-ScrollAmount $target
+                $amount = Read-ScrollAmount $target $config.Join.ScrollPauseMilliseconds
                 $clicks += , (New-ClickEntry 'Scroll in Roblox' $target 3 -Type 'Scroll' -Amount $amount)
                 $number++
             }
@@ -288,11 +289,12 @@ switch ($choice) {
                 $clicks += , (New-ClickEntry "Click $i in Roblox" $target 3)
                 $number++
             }
-            $config.Join.DelayBeforeSeconds = Read-Number '  Secondi da aspettare dopo che Roblox si apre, prima del 1° passo' $config.Join.DelayBeforeSeconds
             $delay = Read-Number '  Secondi di attesa dopo ogni passo' 3
             foreach ($click in $clicks) { $click.DelayAfterSeconds = $delay }
             $config.Join.Clicks = $clicks
         }
+        Write-Host '  Prima del 1° passo Roblox deve aver caricato tutta la home (sennò lo scroll si ferma prima).'
+        $config.Join.DelayBeforeSeconds = Read-Number '  Secondi da aspettare dopo che Roblox si apre (consigliati almeno 20)' $config.Join.DelayBeforeSeconds
     }
 }
 

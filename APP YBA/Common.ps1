@@ -240,14 +240,14 @@ public static class YbaWin32
     }
 
     // Scatti di rotellina nel punto indicato: positivo = giù, negativo = su.
-    public static bool ScrollInWindow(IntPtr hWnd, int offsetX, int offsetY, int notches)
+    public static bool ScrollInWindow(IntPtr hWnd, int offsetX, int offsetY, int notches, int notchDelayMs)
     {
         if (!MoveInWindow(hWnd, offsetX, offsetY)) return false;
         int delta = notches > 0 ? -WHEEL_DELTA : WHEEL_DELTA;
         for (int i = 0; i < Math.Abs(notches); i++)
         {
             mouse_event(MOUSEEVENTF_WHEEL, 0, 0, unchecked((uint)delta), UIntPtr.Zero);
-            Thread.Sleep(80);
+            Thread.Sleep(notchDelayMs);
         }
         return true;
     }
@@ -292,10 +292,11 @@ function Get-YbaDefaultConfig {
             LaunchButton          = $null
         }
         Join                       = [ordered]@{
-            Method             = 'None'
-            PlaceId            = '2809202155'
-            DelayBeforeSeconds = 10
-            Clicks             = @()
+            Method                  = 'None'
+            PlaceId                 = '2809202155'
+            DelayBeforeSeconds      = 20
+            ScrollPauseMilliseconds = 1500
+            Clicks                  = @()
         }
         FinalClicks                = [ordered]@{
             DelayBeforeSeconds = 30
@@ -387,6 +388,22 @@ function Get-YbaTargetWindow {
     $match = @($windows | Where-Object { $_.Title -and $_.ClassName -ne '#32770' })
     if ($match.Count -gt 0) { return $match[0] }
     return $windows[0]
+}
+
+# Scroll lento, a gruppi di 5 scatti con una pausa in mezzo: Roblox carica la home mentre scorre,
+# e scrollando veloce la pagina si ferma alla fine della parte già caricata (gli scatti in più vanno persi).
+# Lo usano sia la prova nel Setup sia l'app, così lo scroll è identico.
+function Invoke-YbaScroll {
+    param([IntPtr]$Handle, [int]$X, [int]$Y, [int]$Notches, [int]$PauseMilliseconds = 1500)
+    $direction = if ($Notches -gt 0) { 1 } else { -1 }
+    $left = [Math]::Abs($Notches)
+    while ($left -gt 0) {
+        $chunk = [Math]::Min(5, $left)
+        [YbaWin32]::FocusWindow($Handle)
+        [void][YbaWin32]::ScrollInWindow($Handle, $X, $Y, $chunk * $direction, 200)
+        $left -= $chunk
+        if ($left -gt 0) { Start-Sleep -Milliseconds $PauseMilliseconds }
+    }
 }
 
 function Send-YbaDiscordMessage {
