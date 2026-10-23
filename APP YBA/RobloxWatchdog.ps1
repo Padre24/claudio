@@ -146,7 +146,14 @@ function Enter-Game {
         }
         'Clicks' {
             Write-YbaLog 'Entro in Your Bizarre Adventure con i passi registrati in Roblox.'
+            # Click iniziale appena Roblox si apre (senza, Roblox non "prende" il mouse) e di nuovo prima dei passi.
+            $initial = $Config.Join.InitialClick
+            if ($initial) { [void](Invoke-ConfiguredClick $initial) }
             Start-Sleep -Seconds ([int]$Config.Join.DelayBeforeSeconds)
+            if ($initial) {
+                [void](Invoke-ConfiguredClick $initial)
+                Start-Sleep -Seconds 1
+            }
             return (Invoke-ClickSequence $Config.Join.Clicks $Config.Join.ScrollPauseMilliseconds)
         }
         default {

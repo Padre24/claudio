@@ -113,7 +113,7 @@ function Read-ClickTarget {
 
 # Fa subito il click appena registrato: si vede se funziona e Roblox passa alla schermata del click dopo.
 function Test-RecordedClick {
-    param($Target)
+    param($Target, [string]$Question = '     Ha funzionato?')
     $window = Get-YbaTargetWindow -ProcessName $Target.ProcessName -WindowTitle $Target.WindowTitle
     if ($null -eq $window) { return $true }
     Write-Host '     Lo clicco adesso: guarda Roblox.'
@@ -122,7 +122,7 @@ function Test-RecordedClick {
     [void][YbaWin32]::ClickInWindow($window.Handle, [int]$Target.X, [int]$Target.Y)
     Start-Sleep -Seconds 2
     [YbaWin32]::FocusConsole()
-    return (Read-YesNo '     Ha funzionato?' $true)
+    return (Read-YesNo $Question $true)
 }
 
 function Read-Notches {
@@ -134,9 +134,16 @@ function Read-Notches {
 }
 
 # Fa lo scroll su Roblox esattamente come lo farà l'app, poi torna su questa finestra.
+# Prima fa il click iniziale: rispondendo qui Roblox perde il mouse, come quando si è appena aperto.
 function Invoke-SetupScroll {
-    param($Window, $Step, [int]$PauseMilliseconds)
+    param($Window, $Step, [int]$PauseMilliseconds, $InitialClick)
     Write-Host '     Provo adesso: guarda Roblox.'
+    if ($InitialClick) {
+        [YbaWin32]::FocusWindow($Window.Handle)
+        Start-Sleep -Milliseconds 400
+        [void][YbaWin32]::ClickInWindow($Window.Handle, [int]$InitialClick.X, [int]$InitialClick.Y)
+        Start-Sleep -Milliseconds 500
+    }
     Invoke-YbaScrollStep -Handle $Window.Handle -Step $Step -PauseMilliseconds $PauseMilliseconds
     Start-Sleep -Seconds 1
     [YbaWin32]::FocusConsole()
@@ -145,7 +152,7 @@ function Invoke-SetupScroll {
 # Prova lo scroll su Roblox in 3 modi, finché uno funziona: rotellina, rotellina mandata direttamente
 # a Roblox, trascinamento. Restituisce il modo (Method) e i suoi valori, da salvare nel passo.
 function Read-ScrollStep {
-    param($Target, [int]$PauseMilliseconds)
+    param($Target, [int]$PauseMilliseconds, $InitialClick)
     $step = [ordered]@{ Method = 'Wheel'; Amount = 5; X = $Target.X; Y = $Target.Y; EndX = 0; EndY = 0 }
     $window = Get-YbaTargetWindow -ProcessName $Target.ProcessName -WindowTitle $Target.WindowTitle
     if ($null -eq $window) {
@@ -163,12 +170,12 @@ function Read-ScrollStep {
         $step.Method = $mode
         while ($true) {
             $step.Amount = Read-Notches $step.Amount
-            Invoke-SetupScroll $window $step $PauseMilliseconds
+            Invoke-SetupScroll $window $step $PauseMilliseconds $InitialClick
             if (-not (Read-YesNo '     La pagina di Roblox si è mossa?' $true)) { break }
             if (Read-YesNo '     Adesso si vede il punto da cliccare dopo?' $true) { return $step }
             # Torna su: verso giù si scrolla un po' di più (la pagina si ferma in cima); verso su si torna indietro uguale.
             $backAmount = if ($step.Amount -gt 0) { -($step.Amount + 20) } else { -$step.Amount }
-            Invoke-SetupScroll $window ([ordered]@{ Method = $mode; Amount = $backAmount; X = $step.X; Y = $step.Y }) 0
+            Invoke-SetupScroll $window ([ordered]@{ Method = $mode; Amount = $backAmount; X = $step.X; Y = $step.Y }) 0 $InitialClick
             Write-Host '     Ho riportato la pagina com''era: prova con un altro numero.'
         }
     }
@@ -182,10 +189,10 @@ function Read-ScrollStep {
         $step.Y = $start.Y
         $step.EndX = $end.X
         $step.EndY = $end.Y
-        Invoke-SetupScroll $window $step $PauseMilliseconds
+        Invoke-SetupScroll $window $step $PauseMilliseconds $InitialClick
         if (Read-YesNo '     La pagina di Roblox si è mossa?' $true) {
             if (Read-YesNo '     Adesso si vede il punto da cliccare dopo?' $true) { return $step }
-            Invoke-SetupScroll $window ([ordered]@{ Method = 'Drag'; X = $step.EndX; Y = $step.EndY; EndX = $step.X; EndY = $step.Y }) 0
+            Invoke-SetupScroll $window ([ordered]@{ Method = 'Drag'; X = $step.EndX; Y = $step.EndY; EndX = $step.X; EndY = $step.Y }) 0 $InitialClick
             Write-Host '     Ho riportato la pagina com''era: prova con altri punti.'
         } elseif (-not (Read-YesNo '     Non si muove neanche così. Riprovo con altri punti?' $true)) {
             Write-Host '     Nessun modo ha funzionato: salvo la rotellina, ma probabilmente lo scroll non andrà.' -ForegroundColor Yellow
@@ -303,19 +310,35 @@ switch ($choice) {
         if ($config.Join.Method -eq 'Clicks' -and @($config.Join.Clicks).Count -gt 0) {
             $recordJoin = Read-YesNo ("  Ci sono già {0} passi registrati. Vuoi registrarli di nuovo?" -f @($config.Join.Clicks).Count) $false
         }
+        # Se si tengono i passi ma manca il click iniziale (config vecchia), lo si registra comunque.
+        $recordInitial = $true
+        if (-not $recordJoin -and $config.Join.InitialClick) {
+            $recordInitial = Read-YesNo '  Vuoi registrare di nuovo il click iniziale su Roblox?' $false
+        }
         $config.Join.Method = 'Clicks'
-        if ($recordJoin) {
+        $robloxProcess = $config.RobloxProcessNames[0]
+        if ($recordInitial -or $recordJoin) {
             Write-Host '  Apri Roblox e lascialo come quando si è appena aperto (nella home, in cima: non scrollare).'
             Write-Host '  Registro i passi uno alla volta e li provo subito su Roblox, così vedi se funzionano.'
             Write-Host '  Dopo ogni prova torna su questa finestra nera per rispondere.'
-            $robloxProcess = $config.RobloxProcessNames[0]
+        }
+        if ($recordInitial) {
+            Write-Host '  Prima di tutto un click su Roblox appena si apre: senza, Roblox non "prende" il mouse.'
+            while ($true) {
+                $target = Read-ClickTarget -Label 'CLICK INIZIALE' -ExpectedProcess $robloxProcess -Hint 'un punto VUOTO di Roblox che non apre niente, tipo uno spazio vuoto in alto'
+                if (Test-RecordedClick $target '     Roblox è rimasto com''era (il click non ha aperto niente)?') { break }
+                Write-Host '     Torna alla home di Roblox e scegli un punto più vuoto.' -ForegroundColor Yellow
+            }
+            $config.Join.InitialClick = New-ClickEntry 'Click iniziale su Roblox' $target 0
+        }
+        if ($recordJoin) {
             $clicks = @()
             $number = 1
             $withScroll = Read-YesNo '  Prima dei click serve scrollare?' $true
             if ($withScroll) {
                 $target = Read-ClickTarget -Label "Passo ${number}: SCROLL" -ExpectedProcess $robloxProcess -Hint 'la zona da scrollare'
                 $entry = New-ClickEntry 'Scroll in Roblox' $target 3 -Type 'Scroll'
-                $scroll = Read-ScrollStep $target $config.Join.ScrollPauseMilliseconds
+                $scroll = Read-ScrollStep $target $config.Join.ScrollPauseMilliseconds $config.Join.InitialClick
                 foreach ($key in $scroll.Keys) { $entry[$key] = $scroll[$key] }
                 $clicks += , $entry
                 $number++

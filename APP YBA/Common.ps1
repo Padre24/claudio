@@ -393,6 +393,7 @@ function Get-YbaDefaultConfig {
             PlaceId                 = '2809202155'
             DelayBeforeSeconds      = 20
             ScrollPauseMilliseconds = 1500
+            InitialClick            = $null
             Clicks                  = @()
         }
         FinalClicks                = [ordered]@{
