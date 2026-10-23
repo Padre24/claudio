@@ -66,6 +66,71 @@ public static class YbaWin32
     [DllImport("user32.dll")] private static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extraInfo);
     [DllImport("user32.dll")] private static extern void mouse_event(uint flags, int dx, int dy, uint data, UIntPtr extraInfo);
     [DllImport("kernel32.dll")] private static extern IntPtr GetConsoleWindow();
+    [DllImport("kernel32.dll")] private static extern IntPtr GetStdHandle(int handle);
+    [DllImport("kernel32.dll")] private static extern bool GetConsoleMode(IntPtr handle, out uint mode);
+    [DllImport("kernel32.dll")] private static extern bool SetConsoleMode(IntPtr handle, uint mode);
+    [DllImport("kernel32.dll")] private static extern IntPtr OpenProcess(uint access, bool inheritHandle, int processId);
+    [DllImport("kernel32.dll")] private static extern bool CloseHandle(IntPtr handle);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] private static extern bool QueryFullProcessImageName(IntPtr process, int flags, StringBuilder name, ref int size);
+    [DllImport("advapi32.dll")] private static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
+    [DllImport("advapi32.dll")] private static extern bool GetTokenInformation(IntPtr token, int infoClass, out int info, int length, out int returnLength);
+
+    private const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+    private const uint TOKEN_QUERY = 0x0008;
+    private const int TOKEN_ELEVATION = 20;
+    private const int STD_INPUT_HANDLE = -10;
+    private const uint ENABLE_QUICK_EDIT_MODE = 0x0040;
+    private const uint ENABLE_EXTENDED_FLAGS = 0x0080;
+
+    // true se il processo gira come amministratore (o se non si riesce nemmeno a leggerne i permessi).
+    public static bool IsProcessElevated(int processId)
+    {
+        IntPtr process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, processId);
+        if (process == IntPtr.Zero) return false;
+        try
+        {
+            IntPtr token;
+            if (!OpenProcessToken(process, TOKEN_QUERY, out token)) return true;
+            try
+            {
+                int elevated;
+                int length;
+                if (!GetTokenInformation(token, TOKEN_ELEVATION, out elevated, 4, out length)) return false;
+                return elevated != 0;
+            }
+            finally { CloseHandle(token); }
+        }
+        finally { CloseHandle(process); }
+    }
+
+    // Percorso dell'exe: funziona anche con le app avviate come amministratore (Process.Path invece no).
+    public static string GetProcessPath(int processId)
+    {
+        IntPtr process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, processId);
+        if (process == IntPtr.Zero) return null;
+        try
+        {
+            StringBuilder sb = new StringBuilder(1024);
+            int size = sb.Capacity;
+            return QueryFullProcessImageName(process, 0, sb, ref size) ? sb.ToString() : null;
+        }
+        finally { CloseHandle(process); }
+    }
+
+    // Con la "Modifica rapida" attiva, un click nella finestra nera mette in pausa lo script.
+    public static void DisableQuickEdit()
+    {
+        IntPtr input = GetStdHandle(STD_INPUT_HANDLE);
+        uint mode;
+        if (GetConsoleMode(input, out mode)) SetConsoleMode(input, (mode & ~ENABLE_QUICK_EDIT_MODE) | ENABLE_EXTENDED_FLAGS);
+    }
+
+    // Tasto premuto in questa finestra (0 = nessuno), senza bloccare.
+    public static int ReadConsoleKey()
+    {
+        try { return Console.KeyAvailable ? (int)Console.ReadKey(true).Key : 0; }
+        catch (Exception) { return 0; }
+    }
 
     // Finestre principali (visibili e senza "owner") dei processi indicati.
     public static IntPtr[] GetTopWindows(int[] processIds)
@@ -175,6 +240,7 @@ function Initialize-YbaEnvironment {
     } catch { }
     # Coordinate in pixel reali anche con lo zoom di Windows (125%, 150%...).
     try { [void][YbaWin32]::SetProcessDPIAware() } catch { }
+    try { [YbaWin32]::DisableQuickEdit() } catch { }
 }
 
 function Write-YbaLog {
@@ -198,6 +264,7 @@ function Get-YbaDefaultConfig {
         Launcher                   = [ordered]@{
             Path                  = ''
             ProcessName           = ''
+            RunAsAdmin            = $false
             StartupTimeoutSeconds = 30
             LoadDelaySeconds      = 3
             LaunchButton          = $null

@@ -67,6 +67,9 @@ function Invoke-ConfiguredClick {
         return $false
     }
     Write-YbaLog ("Click: {0}" -f $Click.Name)
+    if (-not $Script:IsAdmin -and [YbaWin32]::IsProcessElevated($window.ProcessId)) {
+        Write-YbaLog ("{0}.exe è avviata come amministratore: Windows blocca il click. Avvia Avvia.bat come amministratore." -f $Click.ProcessName) Red
+    }
     [YbaWin32]::FocusWindow($window.Handle)
     Start-Sleep -Milliseconds 500
     [void][YbaWin32]::ClickInWindow($window.Handle, [int]$Click.X, [int]$Click.Y)
@@ -196,15 +199,21 @@ function Set-StatusTitle {
     try { $Host.UI.RawUI.WindowTitle = 'APP YBA - Roblox: {0} ({1})' -f $Text, (Get-Date -Format 'HH:mm:ss') } catch { }
 }
 
+# Windows blocca i click verso le app avviate come amministratore: in quel caso serve esserlo anche noi.
+function Restart-AsAdmin {
+    Write-YbaLog "L'app che apre Roblox è avviata come amministratore: riavvio APP YBA come amministratore." Yellow
+    try {
+        Start-Process -FilePath (Join-Path $PSScriptRoot 'Avvia.bat') -Verb RunAs
+        Write-Host 'APP YBA continua nella nuova finestra: questa si può chiudere.' -ForegroundColor Green
+        return $true
+    } catch {
+        Write-YbaLog "Permesso negato: continuo senza amministratore, ma i click sull'app potrebbero non funzionare." Red
+        return $false
+    }
+}
+
 function Start-YbaWatchdog {
     Initialize-YbaEnvironment
-
-    $createdNew = $false
-    $Script:InstanceMutex = [System.Threading.Mutex]::new($true, 'Local\APP_YBA_RobloxWatchdog', [ref]$createdNew)
-    if (-not $createdNew) {
-        Write-Host "APP YBA è già in esecuzione in un'altra finestra." -ForegroundColor Yellow
-        return
-    }
 
     if (-not (Test-YbaConfigExists)) {
         Write-Host 'Configurazione mancante: esegui prima Setup.bat.' -ForegroundColor Red
@@ -212,6 +221,18 @@ function Start-YbaWatchdog {
     }
     $config = Read-YbaConfig
     if (-not (Test-WatchdogConfig $config)) { return }
+
+    $Script:IsAdmin = [YbaWin32]::IsProcessElevated($PID)
+    if ($config.Launcher.RunAsAdmin -and -not $Script:IsAdmin) {
+        if (Restart-AsAdmin) { return }
+    }
+
+    $createdNew = $false
+    $Script:InstanceMutex = [System.Threading.Mutex]::new($true, 'Local\APP_YBA_RobloxWatchdog', [ref]$createdNew)
+    if (-not $createdNew) {
+        Write-Host "APP YBA è già in esecuzione in un'altra finestra." -ForegroundColor Yellow
+        return
+    }
 
     $interval = [Math]::Max(1, [int]$config.CheckIntervalSeconds)
     Write-YbaLog "APP YBA avviata: controllo Roblox ogni $interval secondi. Chiudi questa finestra (o CTRL+C) per fermarla." Cyan

@@ -44,16 +44,24 @@ function Read-Number {
     }
 }
 
-function Wait-HotKey {
-    param([int[]]$Keys)
-    while (@($Keys | Where-Object { [YbaWin32]::IsKeyDown($_) }).Count -gt 0) { Start-Sleep -Milliseconds 30 }
+function Wait-KeyRelease {
+    param([int]$Key)
+    while ([YbaWin32]::IsKeyDown($Key)) { Start-Sleep -Milliseconds 30 }
+}
+
+# 'Now' = F8 premuto, 'Countdown' = INVIO premuto in questa finestra, 'Finish' = F9 o F in questa finestra.
+# F8 a volte non arriva (portatili senza Fn, app avviate come amministratore): INVIO funziona sempre.
+function Wait-Trigger {
+    param([switch]$AllowFinish)
+    Wait-KeyRelease $VK_F8
+    Wait-KeyRelease $VK_F9
+    while ([YbaWin32]::ReadConsoleKey() -ne 0) { }
     while ($true) {
-        foreach ($key in $Keys) {
-            if ([YbaWin32]::IsKeyDown($key)) {
-                while ([YbaWin32]::IsKeyDown($key)) { Start-Sleep -Milliseconds 30 }
-                return $key
-            }
-        }
+        if ([YbaWin32]::IsKeyDown($VK_F8)) { Wait-KeyRelease $VK_F8; return 'Now' }
+        if ($AllowFinish -and [YbaWin32]::IsKeyDown($VK_F9)) { Wait-KeyRelease $VK_F9; return 'Finish' }
+        $consoleKey = [YbaWin32]::ReadConsoleKey()
+        if ($consoleKey -eq [int][ConsoleKey]::Enter) { return 'Countdown' }
+        if ($AllowFinish -and $consoleKey -eq [int][ConsoleKey]::F) { return 'Finish' }
         Start-Sleep -Milliseconds 30
     }
 }
@@ -63,31 +71,37 @@ function Get-CursorTarget {
     if ($null -eq $target) { return $null }
     $process = Get-Process -Id $target.ProcessId -ErrorAction SilentlyContinue
     if ($null -eq $process) { return $null }
-    $path = $null
-    try { $path = $process.Path } catch { }
     [pscustomobject]@{
         ProcessName = $process.ProcessName
-        Path        = $path
+        Path        = [YbaWin32]::GetProcessPath($target.ProcessId)
+        Elevated    = [YbaWin32]::IsProcessElevated($target.ProcessId)
         WindowTitle = [YbaWin32]::GetTitle($target.Window)
         X           = $target.OffsetX
         Y           = $target.OffsetY
     }
 }
 
-# Registra la posizione del mouse quando l'utente preme F8 (F9 = fine, se permesso).
+# Registra la posizione del mouse quando l'utente preme F8 o dopo il conto alla rovescia (F9 = fine, se permesso).
 function Read-ClickTarget {
     param([string]$Label, [string]$ExpectedProcess = '', [switch]$AllowFinish)
-    $keys = @($VK_F8)
-    if ($AllowFinish) { $keys += $VK_F9 }
     while ($true) {
         Write-Host ''
         Write-Host "  >> $Label" -ForegroundColor White
-        Write-Host '     Metti il mouse SOPRA il punto da cliccare (senza cliccare) e premi F8.'
-        if ($AllowFinish) { Write-Host '     Premi F9 se hai finito.' }
-        $key = Wait-HotKey -Keys $keys
-        if ($key -eq $VK_F9) {
+        Write-Host '     Metti il mouse SOPRA il punto da cliccare (senza cliccare) e premi F8 (sui portatili: Fn+F8).'
+        Write-Host '     Se F8 non funziona: premi INVIO qui, poi hai 5 secondi per mettere il mouse sopra il punto.'
+        if ($AllowFinish) { Write-Host '     Hai finito? Premi F9 (oppure F qui).' }
+        $trigger = Wait-Trigger -AllowFinish:$AllowFinish
+        if ($trigger -eq 'Finish') {
             [YbaWin32]::FocusConsole()
             return $null
+        }
+        if ($trigger -eq 'Countdown') {
+            Write-Host '     Metti il mouse sopra il punto (deve essere visibile, non coperto da questa finestra): ' -NoNewline
+            for ($second = 5; $second -ge 1; $second--) {
+                Write-Host "$second... " -NoNewline -ForegroundColor Cyan
+                Start-Sleep -Seconds 1
+            }
+            Write-Host ''
         }
         $target = Get-CursorTarget
         try { [Console]::Beep(880, 120) } catch { }
@@ -172,15 +186,19 @@ if ($config.Launcher.LaunchButton) {
 if ($recordLauncher) {
     Write-Host "  1) Apri l'app che usi per aprire Roblox."
     Write-Host '  2) Metti il mouse sopra il bottone che apre Roblox (NON cliccarlo).'
-    Write-Host '  3) Premi F8: sentirai un beep.'
+    Write-Host '  3) Premi F8: sentirai un beep. (Se non succede niente usa INVIO + 5 secondi.)'
     $target = Read-ClickTarget -Label 'Bottone che apre Roblox'
     $config.Launcher.ProcessName = $target.ProcessName
     $config.Launcher.LaunchButton = New-ClickEntry 'Bottone che apre Roblox' $target 0
+    $config.Launcher.RunAsAdmin = [bool]$target.Elevated
+    if ($target.Elevated) {
+        Write-Host "  L'app è avviata come amministratore: Windows blocca i click dei programmi normali," -ForegroundColor Yellow
+        Write-Host '  quindi Avvia.bat si riavvierà da solo come amministratore (Windows ti chiederà il permesso).' -ForegroundColor Yellow
+    }
     if ($target.Path) {
         Write-Host "  Percorso dell'app: $($target.Path)"
     } else {
-        Write-Host "  Non riesco a leggere il percorso dell'app (forse è avviata come amministratore:" -ForegroundColor Yellow
-        Write-Host '  in quel caso avvia anche Setup.bat e Avvia.bat come amministratore).' -ForegroundColor Yellow
+        Write-Host "  Non riesco a leggere il percorso dell'app: scrivilo tu." -ForegroundColor Yellow
     }
     $defaultPath = if ($target.Path) { $target.Path } else { $config.Launcher.Path }
     while ($true) {

@@ -27,10 +27,13 @@ Non serve installare niente: usa PowerShell, che c'è già in Windows 10 e 11.
    Puoi mandare un messaggio di prova per vedere se funziona.
 3. **Bottone che apre Roblox**: apri la tua app, metti il mouse sopra il bottone (senza cliccare) e premi **F8**.
    Senti un beep e il Setup si salva quale app è e dove si trova il bottone.
+   **Se F8 non fa niente**: sui portatili prova **Fn+F8**; oppure clicca sulla finestra nera del Setup,
+   premi **INVIO** e in 5 secondi metti il mouse sopra il bottone (il bottone deve essere visibile,
+   non coperto dalla finestra nera).
 4. **Come entrare in YBA**, scegli una di queste:
    - `1` se il bottone dell'app ti fa già entrare in YBA;
    - `2` per aprire YBA con il link `roblox://` (placeId `2809202155`, usa l'account loggato su Roblox);
-   - `3` per registrare dei click nella finestra di Roblox (per esempio l'icona di YBA e poi "Gioca"): mouse sopra + **F8** per ogni click, **F9** quando hai finito.
+   - `3` per registrare dei click nella finestra di Roblox (per esempio l'icona di YBA e poi "Gioca"): mouse sopra + **F8** per ogni click, **F9** (oppure **F** nella finestra nera) quando hai finito.
 5. **I 2 click finali**: mouse sopra il primo bottone dell'app + **F8**, poi sopra il secondo + **F8**.
    Poi scegli quanti secondi aspettare (prima del primo click, il gioco deve fare in tempo a caricare) e quanti tra un click e l'altro.
 
@@ -44,8 +47,8 @@ Puoi rifare `Setup.bat` quando vuoi: premi Invio per tenere i valori già salvat
 - **Non bloccare il PC** (Win+L): con lo schermo bloccato Windows non permette di cliccare. Lo schermo spento va bene.
 - I click sono salvati **rispetto alla finestra dell'app**: puoi spostarla, ma se la ridimensioni
   o cambia la grafica dell'app rifai il Setup.
-- Se la tua app si apre **come amministratore**, avvia anche `Setup.bat` e `Avvia.bat` come amministratore
-  (tasto destro → *Esegui come amministratore*), altrimenti Windows blocca i click.
+- Se la tua app si apre **come amministratore**, il Setup se ne accorge e `Avvia.bat` si riavvia da solo
+  come amministratore (Windows ti chiede il permesso), perché altrimenti Windows blocca i click.
 - Roblox va bene sia dal sito che con Bloxstrap/Fishstrap. La versione del Microsoft Store non è supportata.
 - Per farla partire insieme a Windows: Win+R → `shell:startup` → crea lì un collegamento ad `Avvia.bat`.
 
