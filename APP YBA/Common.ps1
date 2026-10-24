@@ -485,7 +485,6 @@ function Get-YbaDefaultConfig {
             LoadingText             = 'LOADING ASSETS'
             LoadingTimeoutSeconds   = 120
             LoadingCheckSeconds     = 15
-            SkipText                = 'Press to Skip'
         }
         FinalClicks                = [ordered]@{
             DelayBeforeSeconds = 30

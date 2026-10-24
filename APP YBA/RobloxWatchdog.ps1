@@ -124,13 +124,13 @@ function Invoke-ClickSequence {
 
 # Stato del controllo della schermata di caricamento di YBA.
 function New-LoadingWatch {
-    [pscustomobject]@{ Since = $null; StuckAt = $null; Misses = 0; SkipTried = $false; EverSeen = $false }
+    [pscustomobject]@{ Since = $null; StuckAt = $null; Misses = 0; EverSeen = $false }
 }
 
 # Legge lo schermo una volta e aggiorna lo stato. Restituisce:
 #   'Loading'    = si vede la schermata di caricamento (o si è appena vista)
 #   'NotLoading' = non si vede
-#   'Stuck'      = si vede da più di LoadingTimeoutSeconds, e cliccare SkipText non è servito
+#   'Stuck'      = si vede da più di LoadingTimeoutSeconds
 #   'Unknown'    = lo schermo non si riesce a leggere
 # Il caricamento è finito solo se la scritta manca per 3 letture di fila: a volte non viene letta.
 function Update-LoadingWatch {
@@ -143,7 +143,6 @@ function Update-LoadingWatch {
         if ($Watch.Misses -ge 3 -and $Watch.Since) {
             Write-YbaLog 'Il gioco ha finito di caricare.' Green
             $Watch.Since = $null
-            $Watch.SkipTried = $false
         }
         if ($Watch.Since) { return 'Loading' }
         return 'NotLoading'
@@ -156,19 +155,6 @@ function Update-LoadingWatch {
         $Watch.StuckAt = $now.AddSeconds([int]$Config.Join.LoadingTimeoutSeconds)
     }
     if ($now -lt $Watch.StuckAt) { return 'Loading' }
-    # Ferma da troppo: prima si prova a premere "Press to Skip", poi ci si arrende.
-    $skip = $null
-    if ($Config.Join.SkipText) { $skip = Find-YbaText -Lines $lines -Needle $Config.Join.SkipText }
-    if (-not $Watch.SkipTried -and $null -ne $skip -and [YbaWin32]::IsPointOnWindow($Handle, $skip.X, $skip.Y)) {
-        # Le scritte cercate non vanno scritte qui: se questa finestra coprisse Roblox, verrebbero lette anche da qui.
-        Write-YbaLog ("Caricamento fermo da {0} secondi: provo a cliccare il tasto per saltarlo." -f [int]($now - $Watch.Since).TotalSeconds) Yellow
-        [YbaWin32]::FocusWindow($Handle)
-        Start-Sleep -Milliseconds 300
-        [void][YbaWin32]::ClickInWindow($Handle, $skip.X, $skip.Y)
-        $Watch.SkipTried = $true
-        $Watch.StuckAt = $now.AddSeconds(60)
-        return 'Loading'
-    }
     Write-YbaLog ("YBA è bloccato nella schermata di caricamento da {0} secondi." -f [int]($now - $Watch.Since).TotalSeconds) Red
     return 'Stuck'
 }

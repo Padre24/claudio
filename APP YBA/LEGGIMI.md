@@ -56,8 +56,7 @@ Non serve installare niente: usa PowerShell, che c'è già in Windows 10 e 11.
    Per sceglierne un'altra entra in YBA e, quando vedi la schermata di caricamento, premi **F8**: il Setup
    ti mostra le scritte che legge e scegli una parola che c'è **solo** lì (es. `LOADING`).
    Mentre Roblox è aperto l'app legge lo schermo ogni 15 secondi: se quella scritta resta per più di
-   2 minuti (si può cambiare), prima prova a cliccare **Press to Skip**; se dopo 1 minuto è ancora lì,
-   chiude Roblox e ricomincia dallo step 1.
+   2 minuti (si può cambiare), chiude Roblox e ricomincia dallo step 1.
 5. **I 2 click finali**: mouse sopra il primo bottone dell'app + **F8**, poi sopra il secondo + **F8**.
    Poi scegli quanti secondi aspettare (prima del primo click, il gioco deve fare in tempo a caricare) e quanti tra un click e l'altro.
 
@@ -106,7 +105,6 @@ Si può modificare con il Blocco note (meglio con APP YBA chiusa):
 | `Join.LoadingText` | `LOADING ASSETS` | Scritta che si vede solo nella schermata di caricamento di YBA (vuoto = nessun controllo) |
 | `Join.LoadingTimeoutSeconds` | `120` | Dopo quanti secondi con quella scritta ancora visibile la considera bloccata |
 | `Join.LoadingCheckSeconds` | `15` | Ogni quanti secondi legge lo schermo per controllare il caricamento |
-| `Join.SkipText` | `Press to Skip` | Scritta da cliccare quando il caricamento è bloccato, prima di chiudere Roblox (vuoto = non provare) |
 | `Join.Clicks[].MaxScrolls` | `15` | (passo "Cerca") quante volte scrolla al massimo prima di riavviare Roblox |
 | `Join.ScrollPauseMilliseconds` | `1500` | (scelta 3) pausa ogni 5 scatti di scroll, per dare tempo a Roblox di caricare la home. Se lo scroll si ferma prima, aumentala (es. `3000`) |
 | `FinalClicks.DelayBeforeSeconds` | `30` | Attesa dopo l'ingresso nel gioco, prima dei click finali |
