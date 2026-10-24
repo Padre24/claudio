@@ -460,13 +460,20 @@ function Get-YbaDefaultConfig {
     [ordered]@{
         WebhookUrl                 = ''
         DiscordUserId              = '350886488235311126'
-        Message                    = 'Roblox si è chiuso/crash'
+        MessageCrash               = 'Roblox crash/chiuso'
+        MessageLoading             = 'YBA bloccato nel caricamento'
+        MessageReconnect           = 'Reconnect issue'
         CheckIntervalSeconds       = 2
         RobloxProcessNames         = @('RobloxPlayerBeta')
         NoWindowGraceSeconds       = 10
         FreezeTimeoutSeconds       = 60
         RobloxStartTimeoutSeconds  = 10
         RobloxWindowTimeoutSeconds = 60
+        ScreenCheckSeconds         = 5
+        DisconnectText             = 'Disconnected'
+        ReconnectText              = 'Reconnect'
+        DisconnectTimeoutSeconds   = 15
+        ReconnectMaxAttempts       = 3
         Launcher                   = [ordered]@{
             Path                  = ''
             ProcessName           = ''
@@ -484,7 +491,6 @@ function Get-YbaDefaultConfig {
             Clicks                  = @()
             LoadingText             = 'LOADING ASSETS'
             LoadingTimeoutSeconds   = 120
-            LoadingCheckSeconds     = 15
         }
         FinalClicks                = [ordered]@{
             DelayBeforeSeconds = 30
@@ -608,8 +614,10 @@ function Invoke-YbaScrollStep {
 
 # Cerca $Needle tra le scritte lette sullo schermo (vedi Ocr.ps1).
 # Restituisce il centro delle parole trovate, in pixel rispetto alla finestra, oppure $null.
+# -Lowest: se la scritta compare più volte, quella più in basso (es. il bottone sotto a un messaggio).
 function Find-YbaText {
-    param($Lines, [string]$Needle)
+    param($Lines, [string]$Needle, [switch]$Lowest)
+    $found = $null
     foreach ($line in @($Lines)) {
         $words = @($line.Words)
         if ($words.Count -eq 0 -or -not [YbaText]::FuzzyContains($line.Text, $Needle)) { continue }
@@ -631,9 +639,11 @@ function Find-YbaText {
         $top = ($span | Measure-Object -Property Y -Minimum).Minimum
         $right = ($span | ForEach-Object { $_.X + $_.Width } | Measure-Object -Maximum).Maximum
         $bottom = ($span | ForEach-Object { $_.Y + $_.Height } | Measure-Object -Maximum).Maximum
-        return [pscustomobject]@{ X = [int](($left + $right) / 2); Y = [int](($top + $bottom) / 2); Text = $line.Text }
+        $match = [pscustomobject]@{ X = [int](($left + $right) / 2); Y = [int](($top + $bottom) / 2); Text = $line.Text }
+        if (-not $Lowest) { return $match }
+        if ($null -eq $found -or $match.Y -gt $found.Y) { $found = $match }
     }
-    return $null
+    return $found
 }
 
 # Cerca la scritta del passo (Text) su Roblox: se la vede la clicca, sennò scrolla (come il passo

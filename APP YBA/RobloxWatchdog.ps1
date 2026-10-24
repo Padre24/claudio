@@ -127,18 +127,15 @@ function New-LoadingWatch {
     [pscustomobject]@{ Since = $null; StuckAt = $null; Misses = 0; EverSeen = $false }
 }
 
-# Legge lo schermo una volta e aggiorna lo stato. Restituisce:
+# Aggiorna lo stato con le scritte appena lette sullo schermo. Restituisce:
 #   'Loading'    = si vede la schermata di caricamento (o si è appena vista)
 #   'NotLoading' = non si vede
 #   'Stuck'      = si vede da più di LoadingTimeoutSeconds
-#   'Unknown'    = lo schermo non si riesce a leggere
 # Il caricamento è finito solo se la scritta manca per 3 letture di fila: a volte non viene letta.
 function Update-LoadingWatch {
-    param($Config, $Watch, [IntPtr]$Handle)
-    $lines = Get-YbaScreenLines -Handle $Handle
-    if ($null -eq $lines) { return 'Unknown' }
+    param($Config, $Watch, $Lines)
     $now = Get-Date
-    if ($null -eq (Find-YbaText -Lines $lines -Needle $Config.Join.LoadingText)) {
+    if ($null -eq (Find-YbaText -Lines $Lines -Needle $Config.Join.LoadingText)) {
         $Watch.Misses++
         if ($Watch.Misses -ge 3 -and $Watch.Since) {
             Write-YbaLog 'Il gioco ha finito di caricare.' Green
@@ -159,11 +156,11 @@ function Update-LoadingWatch {
     return 'Stuck'
 }
 
-# Dopo l'ingresso nel gioco aspetta che finisca il caricamento ($false = bloccato o Roblox chiuso).
+# Dopo l'ingresso nel gioco aspetta che finisca il caricamento: 'Loaded', 'Stuck' o 'Closed'.
 # Se la schermata di caricamento non compare proprio, va avanti.
 function Wait-YbaGameLoaded {
     param($Config)
-    if (-not $Config.Join.LoadingText) { return $true }
+    if (-not $Config.Join.LoadingText) { return 'Loaded' }
     $timeout = [int]$Config.Join.LoadingTimeoutSeconds
     Write-YbaLog "Controllo che il gioco finisca di caricare (bloccato dopo $timeout secondi)..."
     $watch = New-LoadingWatch
@@ -172,18 +169,104 @@ function Wait-YbaGameLoaded {
         $windows = @(Get-RobloxGameWindows $Config)
         if ($windows.Count -eq 0) {
             Write-YbaLog 'Roblox si è chiuso durante il caricamento.' Yellow
-            return $false
+            return 'Closed'
         }
         [YbaWin32]::WakeDisplay()
-        $state = Update-LoadingWatch $Config $watch $windows[0].Handle
-        if ($state -eq 'Stuck') { return $false }
-        if ($watch.EverSeen -and -not $watch.Since) { return $true }
+        $lines = Get-YbaScreenLines -Handle $windows[0].Handle
+        if ($null -ne $lines) {
+            if ((Update-LoadingWatch $Config $watch $lines) -eq 'Stuck') { return 'Stuck' }
+            if ($watch.EverSeen -and -not $watch.Since) { return 'Loaded' }
+        }
         if (-not $watch.EverSeen -and ((Get-Date) - $start).TotalSeconds -ge [Math]::Min(90, $timeout)) {
             Write-YbaLog 'Non vedo la schermata di caricamento: vado avanti.'
-            return $true
+            return 'Loaded'
         }
         Start-Sleep -Seconds 5
     }
+}
+
+# Stato del controllo della finestra "Disconnected" di Roblox.
+function New-DisconnectWatch {
+    [pscustomobject]@{ Since = $null; LastSeen = $null; Attempts = 0 }
+}
+
+# Aggiorna lo stato con le scritte appena lette sullo schermo. Restituisce:
+#   'None'     = la finestra di disconnessione non c'è
+#   'Waiting'  = c'è da meno di DisconnectTimeoutSeconds
+#   'Clicked'  = c'era da troppo: ha cliccato il bottone per riconnettersi (Attempts = numero del tentativo)
+#   'NoButton' = c'era da troppo ma il bottone non si trova (conta comunque come tentativo)
+#   'GiveUp'   = già fatti ReconnectMaxAttempts tentativi: meglio riavviare Roblox
+# I tentativi ripartono da zero quando la finestra non si vede per 2 minuti.
+function Update-DisconnectWatch {
+    param($Config, $Watch, $Lines, [IntPtr]$Handle)
+    $now = Get-Date
+    if ($null -eq (Find-YbaText -Lines $Lines -Needle $Config.DisconnectText)) {
+        $Watch.Since = $null
+        if ($Watch.LastSeen -and ($now - $Watch.LastSeen).TotalSeconds -ge 120) {
+            $Watch.Attempts = 0
+            $Watch.LastSeen = $null
+        }
+        return 'None'
+    }
+    $Watch.LastSeen = $now
+    if (-not $Watch.Since) {
+        # Le scritte cercate non vanno scritte qui: se questa finestra coprisse Roblox, verrebbero lette anche da qui.
+        Write-YbaLog 'Roblox ha perso la connessione al server.' Yellow
+        $Watch.Since = $now
+    }
+    $timeout = [int]$Config.DisconnectTimeoutSeconds
+    if (($now - $Watch.Since).TotalSeconds -lt $timeout) { return 'Waiting' }
+    $max = [int]$Config.ReconnectMaxAttempts
+    if ($max -gt 0 -and $Watch.Attempts -ge $max) {
+        Write-YbaLog ("Ancora senza connessione dopo {0} tentativi." -f $Watch.Attempts) Red
+        return 'GiveUp'
+    }
+    $Watch.Attempts++
+    $Watch.Since = $null
+    # Il bottone è sotto al messaggio, che a volte contiene la stessa parola: si prende quella più in basso.
+    $button = Find-YbaText -Lines $Lines -Needle $Config.ReconnectText -Lowest
+    if ($null -eq $button -or -not [YbaWin32]::IsPointOnWindow($Handle, $button.X, $button.Y)) {
+        Write-YbaLog 'Non trovo il bottone per riconnettermi.' Yellow
+        return 'NoButton'
+    }
+    Write-YbaLog ("Senza connessione da {0} secondi: clicco per riconnettermi (tentativo {1})." -f $timeout, $Watch.Attempts) Yellow
+    [YbaWin32]::FocusWindow($Handle)
+    Start-Sleep -Milliseconds 300
+    [void][YbaWin32]::ClickInWindow($Handle, $button.X, $button.Y)
+    return 'Clicked'
+}
+
+# Controlli continui mentre Roblox è aperto, con una sola lettura dello schermo:
+# disconnessione (clicca per riconnettersi) e caricamento bloccato.
+# Restituisce 'LoadingStuck' o 'ReconnectGiveUp' quando bisogna riavviare Roblox, sennò ''.
+function Invoke-ScreenChecks {
+    param($Config, $LoadingWatch, $DisconnectWatch)
+    $window = @(Get-RobloxGameWindows $Config) | Select-Object -First 1
+    if (-not $window) { return '' }
+    $lines = Get-YbaScreenLines -Handle $window.Handle
+    if ($null -eq $lines) { return '' }
+    if ($Config.DisconnectText) {
+        $disconnect = Update-DisconnectWatch $Config $DisconnectWatch $lines $window.Handle
+        if ($disconnect -eq 'GiveUp') { return 'ReconnectGiveUp' }
+        if ($disconnect -eq 'Clicked' -or $disconnect -eq 'NoButton') {
+            # Un solo avviso per disconnessione, non uno per ogni tentativo.
+            if ($DisconnectWatch.Attempts -eq 1) { [void](Send-YbaDiscordMessage -Config $Config -Text $Config.MessageReconnect) }
+            return ''
+        }
+        if ($disconnect -eq 'Waiting') { return '' }
+    }
+    if ($Config.Join.LoadingText -and (Update-LoadingWatch $Config $LoadingWatch $lines) -eq 'Stuck') { return 'LoadingStuck' }
+    return ''
+}
+
+# Quando è l'app a chiudere Roblox per riprovare (es. caricamento bloccato dopo l'ingresso), il riavvio
+# successivo manda questo messaggio Discord invece di quello del crash.
+$Script:PendingAlert = $null
+
+function Close-RobloxForRestart {
+    param($Config, [string]$Alert)
+    $Script:PendingAlert = $Alert
+    Stop-RobloxProcesses $Config
 }
 
 # Apre l'app che lancia Roblox (se non è già aperta) e restituisce la sua finestra.
@@ -246,12 +329,13 @@ function Enter-Game {
     }
 }
 
+# $Alert = messaggio Discord per questa situazione ('' = nessun messaggio).
 function Invoke-Recovery {
-    param($Config, [string]$Reason)
+    param($Config, [string]$Reason, [string]$Alert)
     Write-YbaLog "ROBLOX $Reason" Red
 
     # Step 2: avviso su Discord + controllo del processo rimasto aperto.
-    [void](Send-YbaDiscordMessage -Config $Config -Text $Config.Message)
+    if ($Alert) { [void](Send-YbaDiscordMessage -Config $Config -Text $Alert) }
     Stop-RobloxProcesses $Config
 
     # Step 3: aprire l'app e cliccare il bottone che apre Roblox.
@@ -276,10 +360,16 @@ function Invoke-Recovery {
         Stop-RobloxProcesses $Config
         return
     }
-    if (-not (Wait-YbaGameLoaded $Config)) {
-        Write-YbaLog 'Chiudo Roblox e ricomincio.' Yellow
-        Stop-RobloxProcesses $Config
-        return
+    switch (Wait-YbaGameLoaded $Config) {
+        'Stuck' {
+            Write-YbaLog 'Chiudo Roblox e ricomincio.' Yellow
+            Close-RobloxForRestart $Config $Config.MessageLoading
+            return
+        }
+        'Closed' {
+            Stop-RobloxProcesses $Config
+            return
+        }
     }
 
     # Step 5: i click finali sull'app.
@@ -359,13 +449,18 @@ function Start-YbaWatchdog {
     $lastStatus = ''
     $problemStatus = ''
     $problemSince = Get-Date
-    # Schermata di caricamento: controllata sempre mentre Roblox è aperto, non solo dopo un riavvio.
+    # Caricamento bloccato e disconnessione: controllati sempre mentre Roblox è aperto, leggendo lo schermo.
     $loadingWatch = New-LoadingWatch
-    $nextLoadingCheck = Get-Date
+    $disconnectWatch = New-DisconnectWatch
+    $screenChecks = [bool]($config.Join.LoadingText -or $config.DisconnectText)
+    $nextScreenCheck = Get-Date
     if ($config.Join.LoadingText) {
         Write-YbaLog ("Controllo del caricamento attivo: riavvio Roblox se resta bloccato più di {0} secondi." -f $config.Join.LoadingTimeoutSeconds)
     } else {
         Write-YbaLog 'Controllo del caricamento disattivato (si attiva da Setup.bat).'
+    }
+    if ($config.DisconnectText) {
+        Write-YbaLog ("Controllo della connessione attivo: se Roblox resta senza connessione per {0} secondi provo a riconnettermi." -f $config.DisconnectTimeoutSeconds)
     }
 
     while ($true) {
@@ -380,17 +475,23 @@ function Start-YbaWatchdog {
 
             if ($status -eq 'Open') {
                 $problemStatus = ''
-                if ($config.Join.LoadingText -and (Get-Date) -ge $nextLoadingCheck) {
-                    $nextLoadingCheck = (Get-Date).AddSeconds([int]$config.Join.LoadingCheckSeconds)
-                    $window = @(Get-RobloxGameWindows $config) | Select-Object -First 1
-                    if ($window -and (Update-LoadingWatch $config $loadingWatch $window.Handle) -eq 'Stuck') {
-                        Invoke-Recovery $config 'è bloccato nella schermata di caricamento'
+                if ($screenChecks -and (Get-Date) -ge $nextScreenCheck) {
+                    $nextScreenCheck = (Get-Date).AddSeconds([int]$config.ScreenCheckSeconds)
+                    $problem = Invoke-ScreenChecks $config $loadingWatch $disconnectWatch
+                    if ($problem) {
+                        if ($problem -eq 'LoadingStuck') {
+                            Invoke-Recovery $config 'è bloccato nella schermata di caricamento' $config.MessageLoading
+                        } else {
+                            Invoke-Recovery $config 'non riesce a riconnettersi al server' $config.MessageReconnect
+                        }
                         $loadingWatch = New-LoadingWatch
+                        $disconnectWatch = New-DisconnectWatch
                         $lastStatus = ''
                     }
                 }
             } else {
                 $loadingWatch = New-LoadingWatch
+                $disconnectWatch = New-DisconnectWatch
                 if ($status -ne $problemStatus) {
                     $problemStatus = $status
                     $problemSince = Get-Date
@@ -409,7 +510,13 @@ function Start-YbaWatchdog {
                         'Frozen'   { "non risponde da più di $limit secondi" }
                         default    { 'si è chiuso/crashato' }
                     }
-                    Invoke-Recovery $config $reason
+                    $alert = $config.MessageCrash
+                    if ($null -ne $Script:PendingAlert) {
+                        $reason = 'è stato chiuso da questa app per riprovare'
+                        $alert = $Script:PendingAlert
+                        $Script:PendingAlert = $null
+                    }
+                    Invoke-Recovery $config $reason $alert
                     $lastStatus = ''
                     $problemStatus = ''
                 }

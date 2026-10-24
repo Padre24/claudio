@@ -2,11 +2,16 @@
 
 Controlla Roblox ogni 2 secondi. Se Roblox si chiude o crasha:
 
-1. manda **"Roblox si è chiuso/crash"** sul tuo webhook Discord e ti pinga;
+1. manda **"Roblox crash/chiuso"** sul tuo webhook Discord e ti pinga;
 2. se il processo di Roblox è rimasto aperto nel Task Manager (succede quando lo chiudi con la X), lo chiude;
 3. apre la tua app e clicca il bottone che apre Roblox; se Roblox non si apre entro 10 secondi ricomincia dal punto 1;
 4. entra in **Your Bizarre Adventure**;
 5. fa i 2 click finali sulla tua app.
+
+Inoltre, mentre Roblox è aperto, legge lo schermo ogni 5 secondi:
+- se YBA resta bloccato nella schermata di caricamento, manda **"YBA bloccato nel caricamento"** e riavvia Roblox;
+- se compare la finestra **Disconnected** e resta per 15 secondi, clicca **Reconnect** e manda **"Reconnect issue"**
+  (una volta sola per disconnessione). Se dopo 3 tentativi è ancora disconnesso, riavvia Roblox.
 
 Non serve installare niente: usa PowerShell, che c'è già in Windows 10 e 11.
 
@@ -55,7 +60,7 @@ Non serve installare niente: usa PowerShell, che c'è già in Windows 10 e 11.
    **Caricamento bloccato** (per tutte le scelte): di default l'app cerca la scritta `LOADING ASSETS`.
    Per sceglierne un'altra entra in YBA e, quando vedi la schermata di caricamento, premi **F8**: il Setup
    ti mostra le scritte che legge e scegli una parola che c'è **solo** lì (es. `LOADING`).
-   Mentre Roblox è aperto l'app legge lo schermo ogni 15 secondi: se quella scritta resta per più di
+   Mentre Roblox è aperto l'app legge lo schermo ogni 5 secondi: se quella scritta resta per più di
    2 minuti (si può cambiare), chiude Roblox e ricomincia dallo step 1.
 5. **I 2 click finali**: mouse sopra il primo bottone dell'app + **F8**, poi sopra il secondo + **F8**.
    Poi scegli quanti secondi aspettare (prima del primo click, il gioco deve fare in tempo a caricare) e quanti tra un click e l'altro.
@@ -84,7 +89,9 @@ Puoi rifare `Setup.bat` quando vuoi: premi Invio per tenere i valori già salvat
 | Nessun processo di Roblox | Interviene subito |
 | Processo attivo ma senza finestra (chiuso con la X, oppure c'è solo la finestra di errore/crash) | Interviene dopo 10 secondi (Roblox appena aperto non ha ancora la finestra) |
 | Finestra di Roblox che "Non risponde" | Interviene dopo 60 secondi |
-| Gioco non trovato nella home, o YBA bloccato nella schermata di caricamento | Chiude Roblox e ricomincia |
+| Gioco non trovato nella home | Chiude Roblox e ricomincia (messaggio "Roblox crash/chiuso") |
+| YBA bloccato nella schermata di caricamento | Chiude Roblox e ricomincia (messaggio "YBA bloccato nel caricamento") |
+| Finestra "Disconnected" per 15 secondi | Clicca "Reconnect" (messaggio "Reconnect issue"); dopo 3 tentativi riavvia Roblox |
 
 ## Impostazioni avanzate (`config.json`)
 
@@ -92,7 +99,14 @@ Si può modificare con il Blocco note (meglio con APP YBA chiusa):
 
 | Campo | Default | Significato |
 |---|---|---|
-| `Message` | `Roblox si è chiuso/crash` | Testo del messaggio Discord |
+| `MessageCrash` | `Roblox crash/chiuso` | Messaggio Discord quando Roblox si chiude, crasha o non risponde |
+| `MessageLoading` | `YBA bloccato nel caricamento` | Messaggio Discord quando YBA resta bloccato nel caricamento |
+| `MessageReconnect` | `Reconnect issue` | Messaggio Discord quando Roblox si disconnette |
+| `ScreenCheckSeconds` | `5` | Ogni quanti secondi legge lo schermo (caricamento e disconnessione) |
+| `DisconnectText` | `Disconnected` | Titolo della finestra di disconnessione di Roblox (vuoto = nessun controllo) |
+| `ReconnectText` | `Reconnect` | Bottone da cliccare per riconnettersi |
+| `DisconnectTimeoutSeconds` | `15` | Dopo quanti secondi di finestra di disconnessione clicca il bottone |
+| `ReconnectMaxAttempts` | `3` | Tentativi di riconnessione prima di riavviare Roblox (`0` = non riavviare mai) |
 | `CheckIntervalSeconds` | `2` | Ogni quanti secondi controlla Roblox |
 | `RobloxProcessNames` | `["RobloxPlayerBeta"]` | Nomi dei processi di Roblox |
 | `NoWindowGraceSeconds` | `10` | Attesa se il processo è attivo ma la finestra non c'è |
@@ -104,7 +118,6 @@ Si può modificare con il Blocco note (meglio con APP YBA chiusa):
 | `Join.DelayBeforeSeconds` | `20` | (scelta 3) attesa dopo l'apertura di Roblox, prima dei passi: la home deve essere caricata |
 | `Join.LoadingText` | `LOADING ASSETS` | Scritta che si vede solo nella schermata di caricamento di YBA (vuoto = nessun controllo) |
 | `Join.LoadingTimeoutSeconds` | `120` | Dopo quanti secondi con quella scritta ancora visibile la considera bloccata |
-| `Join.LoadingCheckSeconds` | `15` | Ogni quanti secondi legge lo schermo per controllare il caricamento |
 | `Join.Clicks[].MaxScrolls` | `15` | (passo "Cerca") quante volte scrolla al massimo prima di riavviare Roblox |
 | `Join.ScrollPauseMilliseconds` | `1500` | (scelta 3) pausa ogni 5 scatti di scroll, per dare tempo a Roblox di caricare la home. Se lo scroll si ferma prima, aumentala (es. `3000`) |
 | `FinalClicks.DelayBeforeSeconds` | `30` | Attesa dopo l'ingresso nel gioco, prima dei click finali |
