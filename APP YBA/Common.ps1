@@ -482,8 +482,10 @@ function Get-YbaDefaultConfig {
             ScrollPauseMilliseconds = 1500
             InitialClick            = $null
             Clicks                  = @()
-            LoadingText             = ''
+            LoadingText             = 'LOADING ASSETS'
             LoadingTimeoutSeconds   = 120
+            LoadingCheckSeconds     = 15
+            SkipText                = 'Press to Skip'
         }
         FinalClicks                = [ordered]@{
             DelayBeforeSeconds = 30

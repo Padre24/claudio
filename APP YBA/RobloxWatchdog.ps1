@@ -122,17 +122,66 @@ function Invoke-ClickSequence {
     return $true
 }
 
-# Se YBA resta nella schermata di caricamento (si vede ancora la scritta LoadingText dopo
-# LoadingTimeoutSeconds), restituisce $false. Se la scritta non compare proprio, va avanti.
+# Stato del controllo della schermata di caricamento di YBA.
+function New-LoadingWatch {
+    [pscustomobject]@{ Since = $null; StuckAt = $null; Misses = 0; SkipTried = $false; EverSeen = $false }
+}
+
+# Legge lo schermo una volta e aggiorna lo stato. Restituisce:
+#   'Loading'    = si vede la schermata di caricamento (o si è appena vista)
+#   'NotLoading' = non si vede
+#   'Stuck'      = si vede da più di LoadingTimeoutSeconds, e cliccare SkipText non è servito
+#   'Unknown'    = lo schermo non si riesce a leggere
+# Il caricamento è finito solo se la scritta manca per 3 letture di fila: a volte non viene letta.
+function Update-LoadingWatch {
+    param($Config, $Watch, [IntPtr]$Handle)
+    $lines = Get-YbaScreenLines -Handle $Handle
+    if ($null -eq $lines) { return 'Unknown' }
+    $now = Get-Date
+    if ($null -eq (Find-YbaText -Lines $lines -Needle $Config.Join.LoadingText)) {
+        $Watch.Misses++
+        if ($Watch.Misses -ge 3 -and $Watch.Since) {
+            Write-YbaLog 'Il gioco ha finito di caricare.' Green
+            $Watch.Since = $null
+            $Watch.SkipTried = $false
+        }
+        if ($Watch.Since) { return 'Loading' }
+        return 'NotLoading'
+    }
+    $Watch.Misses = 0
+    $Watch.EverSeen = $true
+    if (-not $Watch.Since) {
+        Write-YbaLog 'Vedo la schermata di caricamento di YBA.'
+        $Watch.Since = $now
+        $Watch.StuckAt = $now.AddSeconds([int]$Config.Join.LoadingTimeoutSeconds)
+    }
+    if ($now -lt $Watch.StuckAt) { return 'Loading' }
+    # Ferma da troppo: prima si prova a premere "Press to Skip", poi ci si arrende.
+    $skip = $null
+    if ($Config.Join.SkipText) { $skip = Find-YbaText -Lines $lines -Needle $Config.Join.SkipText }
+    if (-not $Watch.SkipTried -and $null -ne $skip -and [YbaWin32]::IsPointOnWindow($Handle, $skip.X, $skip.Y)) {
+        # Le scritte cercate non vanno scritte qui: se questa finestra coprisse Roblox, verrebbero lette anche da qui.
+        Write-YbaLog ("Caricamento fermo da {0} secondi: provo a cliccare il tasto per saltarlo." -f [int]($now - $Watch.Since).TotalSeconds) Yellow
+        [YbaWin32]::FocusWindow($Handle)
+        Start-Sleep -Milliseconds 300
+        [void][YbaWin32]::ClickInWindow($Handle, $skip.X, $skip.Y)
+        $Watch.SkipTried = $true
+        $Watch.StuckAt = $now.AddSeconds(60)
+        return 'Loading'
+    }
+    Write-YbaLog ("YBA è bloccato nella schermata di caricamento da {0} secondi." -f [int]($now - $Watch.Since).TotalSeconds) Red
+    return 'Stuck'
+}
+
+# Dopo l'ingresso nel gioco aspetta che finisca il caricamento ($false = bloccato o Roblox chiuso).
+# Se la schermata di caricamento non compare proprio, va avanti.
 function Wait-YbaGameLoaded {
     param($Config)
-    $text = [string]$Config.Join.LoadingText
-    if (-not $text) { return $true }
+    if (-not $Config.Join.LoadingText) { return $true }
     $timeout = [int]$Config.Join.LoadingTimeoutSeconds
-    Write-YbaLog "Controllo che il gioco finisca di caricare (massimo $timeout secondi)..."
+    Write-YbaLog "Controllo che il gioco finisca di caricare (bloccato dopo $timeout secondi)..."
+    $watch = New-LoadingWatch
     $start = Get-Date
-    $seen = $false
-    $goneChecks = 0
     while ($true) {
         $windows = @(Get-RobloxGameWindows $Config)
         if ($windows.Count -eq 0) {
@@ -140,27 +189,12 @@ function Wait-YbaGameLoaded {
             return $false
         }
         [YbaWin32]::WakeDisplay()
-        $lines = Get-YbaScreenLines -Handle $windows[0].Handle
-        $visible = $null -ne $lines -and $null -ne (Find-YbaText -Lines $lines -Needle $text)
-        if ($visible) {
-            $seen = $true
-            $goneChecks = 0
-        } else {
-            $goneChecks++
-        }
-        $elapsed = ((Get-Date) - $start).TotalSeconds
-        if ($seen -and $goneChecks -ge 2) {
-            Write-YbaLog 'Il gioco ha finito di caricare.' Green
-            return $true
-        }
-        if (-not $seen -and $elapsed -ge [Math]::Min(90, $timeout)) {
+        $state = Update-LoadingWatch $Config $watch $windows[0].Handle
+        if ($state -eq 'Stuck') { return $false }
+        if ($watch.EverSeen -and -not $watch.Since) { return $true }
+        if (-not $watch.EverSeen -and ((Get-Date) - $start).TotalSeconds -ge [Math]::Min(90, $timeout)) {
             Write-YbaLog 'Non vedo la schermata di caricamento: vado avanti.'
             return $true
-        }
-        if ($elapsed -ge $timeout) {
-            if (-not $visible) { return $true }
-            Write-YbaLog "YBA è bloccato nella schermata di caricamento da più di $timeout secondi." Red
-            return $false
         }
         Start-Sleep -Seconds 5
     }
@@ -339,6 +373,14 @@ function Start-YbaWatchdog {
     $lastStatus = ''
     $problemStatus = ''
     $problemSince = Get-Date
+    # Schermata di caricamento: controllata sempre mentre Roblox è aperto, non solo dopo un riavvio.
+    $loadingWatch = New-LoadingWatch
+    $nextLoadingCheck = Get-Date
+    if ($config.Join.LoadingText) {
+        Write-YbaLog ("Controllo del caricamento attivo: riavvio Roblox se resta bloccato più di {0} secondi." -f $config.Join.LoadingTimeoutSeconds)
+    } else {
+        Write-YbaLog 'Controllo del caricamento disattivato (si attiva da Setup.bat).'
+    }
 
     while ($true) {
         try {
@@ -352,7 +394,17 @@ function Start-YbaWatchdog {
 
             if ($status -eq 'Open') {
                 $problemStatus = ''
+                if ($config.Join.LoadingText -and (Get-Date) -ge $nextLoadingCheck) {
+                    $nextLoadingCheck = (Get-Date).AddSeconds([int]$config.Join.LoadingCheckSeconds)
+                    $window = @(Get-RobloxGameWindows $config) | Select-Object -First 1
+                    if ($window -and (Update-LoadingWatch $config $loadingWatch $window.Handle) -eq 'Stuck') {
+                        Invoke-Recovery $config 'è bloccato nella schermata di caricamento'
+                        $loadingWatch = New-LoadingWatch
+                        $lastStatus = ''
+                    }
+                }
             } else {
+                $loadingWatch = New-LoadingWatch
                 if ($status -ne $problemStatus) {
                     $problemStatus = $status
                     $problemSince = Get-Date
