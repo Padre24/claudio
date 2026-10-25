@@ -78,36 +78,68 @@ function Get-YbaWindowBitmap {
     return $bitmap
 }
 
-# Scritte lette nella finestra, riga per riga, con la posizione di ogni parola (in pixel rispetto alla finestra).
-# $null = lo schermo non si riesce a leggere (OCR non disponibile o schermo nero).
-function Get-YbaScreenLines {
-    param([IntPtr]$Handle)
-    if (-not (Initialize-YbaOcr)) { return $null }
-    $bitmap = Get-YbaWindowBitmap $Handle
-    if ($null -eq $bitmap) { return $null }
-    # I nomi dei giochi sono scritti piccoli: ingrandire l'immagine aiuta il riconoscimento.
-    $scale = if ($bitmap.Width -le 2000) { 2 } else { 1 }
+$Script:YbaOcrUseFile = $false
+
+# Immagine -> SoftwareBitmap per l'OCR. Di solito in memoria: lo schermo si legge anche ogni secondo e
+# salvarlo ogni volta su disco lo consumerebbe. Se in memoria non funziona, si passa a un file temporaneo.
+function ConvertTo-YbaSoftwareBitmap {
+    param([System.Drawing.Bitmap]$Bitmap)
+    if (-not $Script:YbaOcrUseFile) {
+        $memory = New-Object System.IO.MemoryStream
+        try {
+            $Bitmap.Save($memory, [System.Drawing.Imaging.ImageFormat]::Bmp)
+            $memory.Position = 0
+            $stream = [System.IO.WindowsRuntimeStreamExtensions]::AsRandomAccessStream($memory)
+            $decoder = Invoke-YbaOcrAwait ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)) ([Windows.Graphics.Imaging.BitmapDecoder])
+            return Invoke-YbaOcrAwait ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
+        } catch {
+            Write-YbaLog ('Lettura dello schermo in memoria non riuscita, uso un file temporaneo: ' + $_.Exception.Message) Yellow
+            $Script:YbaOcrUseFile = $true
+        } finally {
+            $memory.Dispose()
+        }
+    }
     $path = Join-Path $env:TEMP ('appyba-ocr-{0}.png' -f [guid]::NewGuid().ToString('N'))
     $stream = $null
     try {
-        if ($scale -ne 1) {
-            $big = [System.Drawing.Bitmap]::new($bitmap, $bitmap.Width * $scale, $bitmap.Height * $scale)
-            try { $big.Save($path, [System.Drawing.Imaging.ImageFormat]::Png) } finally { $big.Dispose() }
-        } else {
-            $bitmap.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
-        }
+        $Bitmap.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
         $file = Invoke-YbaOcrAwait ([Windows.Storage.StorageFile]::GetFileFromPathAsync($path)) ([Windows.Storage.StorageFile])
         $stream = Invoke-YbaOcrAwait ($file.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])
         $decoder = Invoke-YbaOcrAwait ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)) ([Windows.Graphics.Imaging.BitmapDecoder])
-        $software = Invoke-YbaOcrAwait ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
+        return Invoke-YbaOcrAwait ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
+    } finally {
+        if ($stream) { try { $stream.Dispose() } catch { } }
+        Remove-Item -LiteralPath $path -ErrorAction SilentlyContinue
+    }
+}
+
+# Scritte lette nella finestra, riga per riga, con la posizione di ogni parola (in pixel rispetto alla finestra).
+# $null = lo schermo non si riesce a leggere (OCR non disponibile o schermo nero).
+# -Fast: per le letture continue (ogni secondo) l'immagine si ingrandisce solo se la finestra è piccola:
+# le scritte cercate lì (caricamento, disconnessione) sono grandi, e così si usa meno CPU.
+function Get-YbaScreenLines {
+    param([IntPtr]$Handle, [switch]$Fast)
+    if (-not (Initialize-YbaOcr)) { return $null }
+    $bitmap = Get-YbaWindowBitmap $Handle
+    if ($null -eq $bitmap) { return $null }
+    # I nomi dei giochi nella home sono scritti piccoli: ingrandire l'immagine aiuta il riconoscimento.
+    $maxWidthToScale = if ($Fast) { 1279 } else { 2000 }
+    $scale = if ($bitmap.Width -le $maxWidthToScale) { 2 } else { 1 }
+    $software = $null
+    try {
+        if ($scale -ne 1) {
+            $big = [System.Drawing.Bitmap]::new($bitmap, $bitmap.Width * $scale, $bitmap.Height * $scale)
+            try { $software = ConvertTo-YbaSoftwareBitmap $big } finally { $big.Dispose() }
+        } else {
+            $software = ConvertTo-YbaSoftwareBitmap $bitmap
+        }
         $result = Invoke-YbaOcrAwait ($Script:YbaOcrEngine.RecognizeAsync($software)) ([Windows.Media.Ocr.OcrResult])
     } catch {
         Write-YbaLog ('Lettura dello schermo fallita: ' + $_.Exception.Message) Red
         return $null
     } finally {
-        if ($stream) { try { $stream.Dispose() } catch { } }
+        if ($software) { try { $software.Dispose() } catch { } }
         $bitmap.Dispose()
-        Remove-Item -LiteralPath $path -ErrorAction SilentlyContinue
     }
     $lines = foreach ($line in $result.Lines) {
         [pscustomobject]@{

@@ -469,7 +469,7 @@ function Get-YbaDefaultConfig {
         FreezeTimeoutSeconds       = 60
         RobloxStartTimeoutSeconds  = 10
         RobloxWindowTimeoutSeconds = 60
-        ScreenCheckSeconds         = 5
+        ScreenCheckEverySeconds    = 1
         DisconnectText             = 'Disconnected'
         ReconnectText              = 'Reconnect'
         DisconnectTimeoutSeconds   = 15
@@ -490,10 +490,10 @@ function Get-YbaDefaultConfig {
             InitialClick            = $null
             Clicks                  = @()
             LoadingText             = 'LOADING ASSETS'
-            LoadingTimeoutSeconds   = 120
+            LoadingStuckChecks      = 15
         }
         FinalClicks                = [ordered]@{
-            DelayBeforeSeconds = 30
+            SecondsAfterJoin   = 10
             Clicks             = @()
         }
     }

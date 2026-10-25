@@ -502,7 +502,9 @@ if (Read-YesNo '  Vuoi questo controllo?' $true) {
     }
     if ($changeText) { $config.Join.LoadingText = Read-LoadingText $config }
     if ($config.Join.LoadingText) {
-        $config.Join.LoadingTimeoutSeconds = Read-Number '  Dopo quanti secondi di caricamento lo considero bloccato?' $config.Join.LoadingTimeoutSeconds 30
+        Write-Host '  L''app legge lo schermo ogni secondo: se la scritta c''è per tot volte di fila, chiude Roblox.'
+        Write-Host '  Attento: se il caricamento normale dura di più, chiuderebbe Roblox anche quando non è bloccato.'
+        $config.Join.LoadingStuckChecks = Read-Number '  Dopo quanti secondi di fila con la scritta lo considero bloccato?' $config.Join.LoadingStuckChecks 3
     }
 } else {
     $config.Join.LoadingText = ''
@@ -523,11 +525,12 @@ if ($recordFinal) {
         $target = Read-ClickTarget -Label "Click finale $i di $count" -ExpectedProcess $config.Launcher.ProcessName
         $clicks += , (New-ClickEntry "Click finale $i" $target 2)
     }
-    $config.FinalClicks.DelayBeforeSeconds = Read-Number '  Secondi da aspettare dopo che Roblox entra nel gioco, prima del 1° click' $config.FinalClicks.DelayBeforeSeconds
     $between = Read-Number "  Secondi tra un click e l'altro" 2
     foreach ($click in $clicks) { $click.DelayAfterSeconds = $between }
     $config.FinalClicks.Clicks = $clicks
 }
+# Chiesto anche se si tengono i click già registrati, così si cambia senza rifarli.
+$config.FinalClicks.SecondsAfterJoin = Read-Number '  Secondi da aspettare dopo l''ingresso nel gioco, prima del 1° click finale' $config.FinalClicks.SecondsAfterJoin
 
 Save-YbaConfig $config
 Write-Host ''
