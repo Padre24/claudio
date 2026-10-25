@@ -199,8 +199,34 @@ function Update-DisconnectWatch {
 # Controlli continui mentre Roblox è aperto, con una sola lettura dello schermo:
 # disconnessione (clicca per riconnettersi) e caricamento bloccato.
 # Restituisce 'LoadingStuck' o 'ReconnectGiveUp' quando bisogna riavviare Roblox, sennò ''.
+# Stato del controllo della schermata iniziale ("PATCH NOTES") ferma.
+function New-PatchNotesWatch {
+    [pscustomobject]@{ Count = 0; Clicked = $false }
+}
+
+function Test-PatchNotesCheck {
+    param($Config)
+    [bool]($Config.PatchNotes.Text -and $Config.PatchNotes.Click)
+}
+
+# Aggiorna lo stato con le scritte appena lette (una lettura al secondo). $true = è il momento di fare il click:
+# la scritta si è vista per PatchNotes.StuckChecks letture di fila. Un solo click: il prossimo solo dopo che
+# la scritta è sparita ed è ricomparsa.
+function Update-PatchNotesWatch {
+    param($Config, $Watch, $Lines)
+    if ($null -eq (Find-YbaText -Lines $Lines -Needle $Config.PatchNotes.Text)) {
+        $Watch.Count = 0
+        $Watch.Clicked = $false
+        return $false
+    }
+    $Watch.Count++
+    if ($Watch.Clicked -or $Watch.Count -lt [int]$Config.PatchNotes.StuckChecks) { return $false }
+    $Watch.Clicked = $true
+    return $true
+}
+
 function Invoke-ScreenChecks {
-    param($Config, $LoadingWatch, $DisconnectWatch)
+    param($Config, $LoadingWatch, $DisconnectWatch, $PatchNotesWatch)
     $window = @(Get-RobloxGameWindows $Config) | Select-Object -First 1
     if (-not $window) { return '' }
     $lines = Get-YbaScreenLines -Handle $window.Handle -Fast
@@ -214,6 +240,11 @@ function Invoke-ScreenChecks {
             return ''
         }
         if ($disconnect -eq 'Waiting') { return '' }
+    }
+    if ((Test-PatchNotesCheck $Config) -and (Update-PatchNotesWatch $Config $PatchNotesWatch $lines)) {
+        # Le scritte cercate non vanno scritte qui: se questa finestra coprisse Roblox, verrebbero lette anche da qui.
+        Write-YbaLog ("Il gioco è fermo sulla schermata iniziale da {0} letture di fila: faccio il click sull'app." -f $PatchNotesWatch.Count) Yellow
+        [void](Invoke-ConfiguredClick $Config.PatchNotes.Click)
     }
     if ($Config.Join.LoadingText -and (Update-LoadingWatch $Config $LoadingWatch $lines) -eq 'Stuck') { return 'LoadingStuck' }
     return ''
@@ -391,7 +422,8 @@ function Start-YbaWatchdog {
     # Caricamento bloccato e disconnessione: controllati sempre mentre Roblox è aperto, leggendo lo schermo.
     $loadingWatch = New-LoadingWatch
     $disconnectWatch = New-DisconnectWatch
-    $screenChecks = [bool]($config.Join.LoadingText -or $config.DisconnectText)
+    $patchNotesWatch = New-PatchNotesWatch
+    $screenChecks = [bool]($config.Join.LoadingText -or $config.DisconnectText -or (Test-PatchNotesCheck $config))
     $screenEvery = [Math]::Max(0, [int]$config.ScreenCheckEverySeconds)
     $nextScreenCheck = Get-Date
     # Con i controlli dello schermo attivi il giro dura quanto l'intervallo fra due letture (di solito 1 secondo).
@@ -403,6 +435,9 @@ function Start-YbaWatchdog {
     }
     if ($config.DisconnectText) {
         Write-YbaLog ("Controllo della connessione attivo: se Roblox resta senza connessione per {0} secondi provo a riconnettermi." -f $config.DisconnectTimeoutSeconds)
+    }
+    if (Test-PatchNotesCheck $config) {
+        Write-YbaLog ("Controllo della schermata iniziale attivo: dopo {0} letture di fila faccio un click su {1}.exe." -f $config.PatchNotes.StuckChecks, $config.PatchNotes.Click.ProcessName)
     }
 
     while ($true) {
@@ -421,7 +456,7 @@ function Start-YbaWatchdog {
                 if ($screenChecks -and (Get-Date) -ge $nextScreenCheck) {
                     # Un po' di margine, così una lettura al secondo non salta un giro per pochi millisecondi.
                     $nextScreenCheck = (Get-Date).AddSeconds($screenEvery).AddMilliseconds(-300)
-                    $problem = Invoke-ScreenChecks $config $loadingWatch $disconnectWatch
+                    $problem = Invoke-ScreenChecks $config $loadingWatch $disconnectWatch $patchNotesWatch
                     if ($problem) {
                         if ($problem -eq 'LoadingStuck') {
                             Invoke-Recovery $config 'è bloccato nella schermata di caricamento' $config.MessageLoading
@@ -430,12 +465,14 @@ function Start-YbaWatchdog {
                         }
                         $loadingWatch = New-LoadingWatch
                         $disconnectWatch = New-DisconnectWatch
+                        $patchNotesWatch = New-PatchNotesWatch
                         $lastStatus = ''
                     }
                 }
             } else {
                 $loadingWatch = New-LoadingWatch
                 $disconnectWatch = New-DisconnectWatch
+                $patchNotesWatch = New-PatchNotesWatch
                 if ($status -ne $problemStatus) {
                     $problemStatus = $status
                     $problemSince = Get-Date

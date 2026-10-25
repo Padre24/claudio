@@ -496,6 +496,12 @@ function Get-YbaDefaultConfig {
             SecondsAfterJoin   = 10
             Clicks             = @()
         }
+        # Gioco fermo sulla schermata iniziale: dopo StuckChecks letture di fila con Text, UN click (Click).
+        PatchNotes                 = [ordered]@{
+            Text        = 'PATCH NOTES'
+            StuckChecks = 15
+            Click       = $null
+        }
     }
 }
 

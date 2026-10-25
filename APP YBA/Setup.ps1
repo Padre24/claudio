@@ -532,6 +532,26 @@ if ($recordFinal) {
 # Chiesto anche se si tengono i click già registrati, così si cambia senza rifarli.
 $config.FinalClicks.SecondsAfterJoin = Read-Number '  Secondi da aspettare dopo l''ingresso nel gioco, prima del 1° click finale' $config.FinalClicks.SecondsAfterJoin
 
+# Gioco fermo sulla schermata iniziale ("PATCH NOTES"): UN click su un'app esterna.
+Write-Host ''
+Write-Host '  A volte il gioco resta fermo sulla schermata iniziale (quella con "PATCH NOTES"): l''app può'
+Write-Host '  accorgersene leggendo lo schermo ogni secondo e fare UN click su un''app esterna.'
+$hasPatchClick = $null -ne $config.PatchNotes.Click
+if (Read-YesNo '  Vuoi questo controllo?' $hasPatchClick) {
+    $config.PatchNotes.Text = Read-Answer '  Scritta da riconoscere' $config.PatchNotes.Text
+    $config.PatchNotes.StuckChecks = Read-Number '  Dopo quanti secondi di fila con la scritta faccio il click?' $config.PatchNotes.StuckChecks 3
+    $recordPatchClick = $true
+    if ($hasPatchClick) {
+        $recordPatchClick = Read-YesNo ("  C'è già un click registrato su {0}.exe. Vuoi registrarlo di nuovo?" -f $config.PatchNotes.Click.ProcessName) $false
+    }
+    if ($recordPatchClick) {
+        $target = Read-ClickTarget -Label 'Bottone da cliccare quando il gioco è fermo sulla schermata iniziale'
+        $config.PatchNotes.Click = New-ClickEntry 'Click per la schermata iniziale ferma' $target 0
+    }
+} else {
+    $config.PatchNotes.Click = $null
+}
+
 Save-YbaConfig $config
 Write-Host ''
 Write-Host 'Fatto! Configurazione salvata in config.json.' -ForegroundColor Green

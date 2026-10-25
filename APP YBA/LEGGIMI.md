@@ -11,6 +11,8 @@ Controlla Roblox ogni 2 secondi. Se Roblox si chiude o crasha:
 Inoltre, mentre Roblox è aperto, legge lo schermo ogni secondo:
 - se la schermata di caricamento di YBA c'è per 15 letture di fila (15 secondi), manda **"YBA bloccato nel caricamento"**
   e riavvia Roblox;
+- se il gioco resta fermo sulla schermata **PATCH NOTES** per 15 secondi di fila, fa **un** click sull'app esterna
+  che hai registrato (opzione del Setup);
 - se compare la finestra **Disconnected** e resta per 15 secondi, clicca **Reconnect** e manda **"Reconnect issue"**
   (una volta sola per disconnessione). Se dopo 3 tentativi è ancora disconnesso, riavvia Roblox.
 
@@ -67,6 +69,9 @@ Non serve installare niente: usa PowerShell, che c'è già in Windows 10 e 11.
 5. **I 2 click finali**: mouse sopra il primo bottone dell'app + **F8**, poi sopra il secondo + **F8**.
    Poi scegli quanti secondi tra un click e l'altro, e quanti secondi aspettare dopo l'ingresso nel gioco
    prima del primo click (di default 10: si può cambiare anche tenendo i click già registrati).
+   Poi c'è l'opzione **PATCH NOTES**: se il gioco resta fermo sulla schermata iniziale (di default per 15 letture
+   di fila, una al secondo), l'app fa **un** click sul bottone di un'app esterna che registri con **F8**.
+   Se dopo il click la scritta resta, non clicca di nuovo finché non sparisce e ricompare.
 
 Poi doppio click su **`Avvia.bat`**. Per fermarla chiudi la finestra (o premi CTRL+C).
 
@@ -123,5 +128,7 @@ Si può modificare con il Blocco note (meglio con APP YBA chiusa):
 | `Join.LoadingStuckChecks` | `15` | Dopo quante letture di fila con quella scritta (una al secondo) la considera bloccata |
 | `Join.Clicks[].MaxScrolls` | `15` | (passo "Cerca") quante volte scrolla al massimo prima di riavviare Roblox |
 | `Join.ScrollPauseMilliseconds` | `1500` | (scelta 3) pausa ogni 5 scatti di scroll, per dare tempo a Roblox di caricare la home. Se lo scroll si ferma prima, aumentala (es. `3000`) |
+| `PatchNotes.Text` | `PATCH NOTES` | Scritta della schermata iniziale ferma |
+| `PatchNotes.StuckChecks` | `15` | Dopo quante letture di fila con quella scritta fa il click |
 | `FinalClicks.SecondsAfterJoin` | `10` | Attesa dopo l'ingresso nel gioco (con la scelta 1: dopo l'apertura di Roblox), prima dei click finali |
 | `...Clicks[].DelayAfterSeconds` | `2`/`3` | Attesa dopo ogni click |
