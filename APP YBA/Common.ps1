@@ -463,6 +463,7 @@ function Get-YbaDefaultConfig {
         MessageCrash               = 'Roblox crash/chiuso'
         MessageLoading             = 'YBA bloccato nel caricamento'
         MessageReconnect           = 'Reconnect issue'
+        MessagePatchNotes          = 'YBA bloccato su PATCH NOTES'
         CheckIntervalSeconds       = 2
         RobloxProcessNames         = @('RobloxPlayerBeta')
         NoWindowGraceSeconds       = 10

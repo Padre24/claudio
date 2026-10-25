@@ -11,8 +11,8 @@ Controlla Roblox ogni 2 secondi. Se Roblox si chiude o crasha:
 Inoltre, mentre Roblox è aperto, legge lo schermo ogni secondo:
 - se la schermata di caricamento di YBA c'è per 15 letture di fila (15 secondi), manda **"YBA bloccato nel caricamento"**
   e riavvia Roblox;
-- se il gioco resta fermo sulla schermata **PATCH NOTES** per 15 secondi di fila, fa **un** click sull'app esterna
-  che hai registrato (opzione del Setup);
+- se il gioco resta fermo sulla schermata **PATCH NOTES** per 15 secondi di fila, manda **"YBA bloccato su PATCH NOTES"**
+  e fa **un** click sull'app esterna che hai registrato (opzione del Setup);
 - se compare la finestra **Disconnected** e resta per 15 secondi, clicca **Reconnect** e manda **"Reconnect issue"**
   (una volta sola per disconnessione). Se dopo 3 tentativi è ancora disconnesso, riavvia Roblox.
 
@@ -100,6 +100,7 @@ Puoi rifare `Setup.bat` quando vuoi: premi Invio per tenere i valori già salvat
 | Gioco non trovato nella home | Chiude Roblox e ricomincia (messaggio "Roblox crash/chiuso") |
 | YBA bloccato nella schermata di caricamento | Chiude Roblox e ricomincia (messaggio "YBA bloccato nel caricamento") |
 | Finestra "Disconnected" per 15 secondi | Clicca "Reconnect" (messaggio "Reconnect issue"); dopo 3 tentativi riavvia Roblox |
+| Gioco fermo su "PATCH NOTES" per 15 secondi (se attivato nel Setup) | Un click sull'app esterna (messaggio "YBA bloccato su PATCH NOTES") |
 
 ## Impostazioni avanzate (`config.json`)
 
@@ -110,6 +111,7 @@ Si può modificare con il Blocco note (meglio con APP YBA chiusa):
 | `MessageCrash` | `Roblox crash/chiuso` | Messaggio Discord quando Roblox si chiude, crasha o non risponde |
 | `MessageLoading` | `YBA bloccato nel caricamento` | Messaggio Discord quando YBA resta bloccato nel caricamento |
 | `MessageReconnect` | `Reconnect issue` | Messaggio Discord quando Roblox si disconnette |
+| `MessagePatchNotes` | `YBA bloccato su PATCH NOTES` | Messaggio Discord quando il gioco resta fermo su PATCH NOTES (vuoto = nessun messaggio) |
 | `ScreenCheckEverySeconds` | `1` | Ogni quanti secondi legge lo schermo (caricamento e disconnessione) |
 | `DisconnectText` | `Disconnected` | Titolo della finestra di disconnessione di Roblox (vuoto = nessun controllo) |
 | `ReconnectText` | `Reconnect` | Bottone da cliccare per riconnettersi |

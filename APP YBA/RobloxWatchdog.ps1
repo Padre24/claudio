@@ -244,6 +244,7 @@ function Invoke-ScreenChecks {
     if ((Test-PatchNotesCheck $Config) -and (Update-PatchNotesWatch $Config $PatchNotesWatch $lines)) {
         # Le scritte cercate non vanno scritte qui: se questa finestra coprisse Roblox, verrebbero lette anche da qui.
         Write-YbaLog ("Il gioco è fermo sulla schermata iniziale da {0} letture di fila: faccio il click sull'app." -f $PatchNotesWatch.Count) Yellow
+        if ($Config.MessagePatchNotes) { [void](Send-YbaDiscordMessage -Config $Config -Text $Config.MessagePatchNotes) }
         [void](Invoke-ConfiguredClick $Config.PatchNotes.Click)
     }
     if ($Config.Join.LoadingText -and (Update-LoadingWatch $Config $LoadingWatch $lines) -eq 'Stuck') { return 'LoadingStuck' }
